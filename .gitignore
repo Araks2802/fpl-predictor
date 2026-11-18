@@ -9,3 +9,6 @@ data/2025-26/
 # large investigation output
 models/bias_2025_26.parquet
 notebooks/
+
+# study notes and report: kept locally, not published
+notes/
