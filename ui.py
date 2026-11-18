@@ -96,7 +96,7 @@ div[data-testid="stSegmentedControl"] button, div[data-testid="stPills"] button 
 
 
 SITE = 'https://pranav-analysis.arakkal-pranav.workers.dev'
-LINKEDIN = ''          # your LinkedIn profile, e.g. https://www.linkedin.com/in/your-name  (the link is hidden while this is blank)
+LINKEDIN = 'https://www.linkedin.com/in/pranav-arakkal-323691249'          # your LinkedIn profile, e.g. https://www.linkedin.com/in/your-name  (the link is hidden while this is blank)
 
 
 def _links(sep=' · '):

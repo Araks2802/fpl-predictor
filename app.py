@@ -84,7 +84,7 @@ with st.sidebar:
             sq = pd.DataFrame({'id': picked}); sq['now'] = (P.loc[picked, 'price'].values * 10).round().astype(int); sq['sell'] = sq['now']; sq['buy'] = sq['now']
             sq['pos'] = P.loc[picked, 'pos'].values
             team = dict(name='My team', manager='', squad=sq, bank=int(round(bank_in * 10)), free_transfers=1,
-                        chips_left=['Wildcard', 'Free Hit', 'Bench Boost', 'Triple Captain'], points=None, rank=None, squad_gw=None)
+                        chips_left=['Wildcard', 'Free Hit', 'Bench Boost', 'Triple Captain'], chips_used=[], points=None, rank=None, squad_gw=None)
         else: st.caption(f'{len(picked)} of 15 picked')
     if team is not None:
         with st.expander('Bank and free transfers'):
@@ -102,7 +102,7 @@ sub = (f"{team['manager']} · {team['points']} pts · rank {team['rank']:,}" if 
 html(f'<div class="hero"><div class="hero-title">{ui.esc(team["name"]) if team else "Your FPL team,"} <span>{"GW" + str(G0) if team else "projected."}</span></div>'
      f'<div class="hero-sub">{ui.esc(sub)}</div>'
      f'<span class="pill g">GW{G0} · {deadline:%a %d %b %H:%M} UTC</span><span class="pill">Deadline in {countdown}</span>{updated_pill}</div>')
-page = st.segmented_control('Page', ['My team', 'Transfers', 'Planner', 'Captain', 'Differentials', 'Compare', 'Players', 'Fixtures', 'How it works'], default='My team', label_visibility='collapsed', key='nav') or 'My team'
+page = st.segmented_control('Page', ['My team', 'Transfers', 'Planner', 'Captain', 'Chips', 'Differentials', 'Compare', 'Players', 'Fixtures', 'How it works'], default='My team', label_visibility='collapsed', key='nav') or 'My team'
 
 
 def done():
@@ -177,9 +177,10 @@ elif page == 'Transfers':
     ids = [int(i) for i in team['squad'].id]
     c1, c2, c3, c4 = st.columns([1.2, 1.2, 1, 1])
     plan = c1.segmented_control('Plan over', ['1 GW', '3 GWs'], default='3 GWs', key='plan') or '3 GWs'
-    chip = c2.segmented_control('Chip', ['None'] + [x for x in team['chips_left'] if x in ('Wildcard', 'Free Hit')], default='None', key='chip') or 'None'
+    chip = c2.segmented_control('Transfer chip', ['None'] + [x for x in team['chips_left'] if x in ('Wildcard', 'Free Hit')], default='None', key='chip') or 'None'
     maxt = c3.number_input('Max transfers', 1, 5, min(max(team['free_transfers'], 1) + 1, 5), disabled=chip != 'None')
     roll = c4.number_input('Saving a transfer is worth', 0.0, 3.0, 1.0, 0.5, help='Points. A transfer must gain at least this much to be used now.')
+    html('<div class="note" style="margin:-4px 0 8px 0">Only Wildcard and Free Hit change transfers. For Bench Boost, Triple Captain and the best week to play each chip, open the <b>Chips</b> tab.</div>')
     with st.expander('Never buy / always keep'):
         a, b = st.columns(2)
         banned = a.multiselect('Never buy', [i for i in P.index if i not in ids], format_func=LAB.get)
@@ -360,6 +361,76 @@ elif page == 'Differentials':
     sec('Differential captains', f'GW{G0} · owned by under 20%')
     C_ = P[(P.status != 'u') & (P.selected < 20) & (P.chance.isna() | (P.chance >= 75))].nlargest(5, f'xp_{G0}')
     html(ui.player_table(P, C_.index, ALL_GWS, f'xp_{G0}', extra=('As captain', lambda i: f'<b>{2 * P.loc[i, f"xp_{G0}"]:.1f}</b>')))
+
+# ================================================================== CHIPS
+elif page == 'Chips':
+    if team is None: need_team(); done()
+    used = team.get('chips_used', [])
+    ALLC = ['Wildcard', 'Free Hit', 'Bench Boost', 'Triple Captain']
+    ICON = {'Wildcard': '🃏', 'Free Hit': '🎯', 'Bench Boost': '🪑', 'Triple Captain': '👑'}
+    used_in = lambda c, h: [g for n, g in used if n == c and fe.HALVES[h][0] <= g <= fe.HALVES[h][1]]
+    half_now = 1 if G0 <= 19 else 2
+    sj = team['squad'][['id', 'sell', 'now']].to_json()
+
+    @st.cache_data(show_spinner=False)
+    def chip_table(squad_json, bank, ft, gws, wc_starts, boost):
+        from io import StringIO
+        return fe.chip_values(P, pd.read_json(StringIO(squad_json)), bank, ft, list(gws), wc_starts=wc_starts)
+
+    for h in (1, 2):
+        lo, hi = fe.HALVES[h]
+        if h < half_now: continue
+        gws = [g for g in ALL_GWS if lo <= g <= hi]
+        left = [c for c in ALLC if not used_in(c, h)]
+        title = f'Gameweeks {lo} to {hi}' + (' (now)' if h == half_now else ' (chips refresh)')
+        sec(title, 'first set must be played before the GW19 deadline' if h == 1 else 'a full new set of 4 chips')
+        cards_ = []
+        for c in ALLC:
+            u = used_in(c, h)
+            cards_.append((f'{ICON[c]} {c}', f'<b style="color:#e90052">Used in GW{u[0]}</b>' if u else '<b style="color:#00ff87">Available</b>', ''))
+        html(ui.cards(cards_))
+        if not left or not gws:
+            html('<div class="note">No chips left in this half.</div>'); continue
+        with st.spinner('Working out the best week for each chip...'):
+            V = chip_table(sj, team['bank'], team['free_transfers'], tuple(gws), 6 if h == half_now else 0, BOOST)
+        fh_ban = set()
+        if h == 2 and (19 in used_in('Free Hit', 1)): fh_ban = {20}            # no Free Hit in two weeks running
+        plan = fe.plan_chips(V, left, fh_banned=fh_ban)
+        why = {'Bench Boost': lambda g: f'your bench is projected {V.bb[g]:.1f} pts',
+               'Triple Captain': lambda g: f'{ui.esc(V.tc_name[g])} captained: +{V.tc[g]:.1f} pts',
+               'Free Hit': lambda g: f'a one-week squad scores {V.fh[g]:+.1f} pts more than yours',
+               'Wildcard': lambda g: f'a rebuilt squad gains {V.wc[g]:+.1f} pts over 4 weeks vs normal transfers'}
+        col = {'Bench Boost': 'bb', 'Triple Captain': 'tc', 'Free Hit': 'fh', 'Wildcard': 'wc'}
+        plan_cards = []
+        for c in ALLC:
+            if c in plan: plan_cards.append((f'GW{plan[c]}', f'{ICON[c]} <b>{c}</b> · {why[c](plan[c])}', 'g'))
+            elif c in left: plan_cards.append(('Later', f'{ICON[c]} <b>{c}</b> · decide nearer the time (needs fixtures and team news)', ''))
+        html('<div class="note" style="margin:6px 0 2px 0"><b style="color:#fff">Suggested plan</b> · one chip per gameweek</div>' + ui.cards(plan_cards))
+        # per-gameweek values, best week per chip highlighted
+        show = [c for c in left]
+        head = '<tr><th>Gameweek</th>' + ''.join(f'<th>{ICON[c]} {c}</th>' for c in show) + '<th>Fixtures</th></tr>'
+        body = ''
+        for g in gws:
+            cells = ''
+            for c in show:
+                v = V.loc[g, col[c]]
+                txt = '-' if pd.isna(v) else (f'+{v:.1f}' + (f' <span class="note">({ui.esc(V.tc_name[g])})</span>' if c == 'Triple Captain' else ''))
+                best_ = plan.get(c) == g
+                cells += f'<td style="{"color:#1b0021;background:#00ff87;font-weight:800" if best_ else ""}">{txt}</td>'
+            fx = ('<b style="color:#04f5ff">' + f'{V.doubles[g]} doubles</b> ' if V.doubles[g] else '') + (f'<b style="color:#e90052">{V.blanks[g]} blanks</b>' if V.blanks[g] else '')
+            body += f'<tr><td><b>GW{g}</b></td>{cells}<td>{fx or "normal"}</td></tr>'
+        html(f'<table class="fpl">{head}{body}</table>')
+        if h == half_now:
+            fig = go.Figure()
+            for c, colr in zip(show, [ui.GREEN, ui.CYAN, ui.PINK, '#ebff00']):
+                fig.add_trace(go.Scatter(x=[f'GW{g}' for g in gws], y=V[col[c]].values, name=c, mode='lines+markers', line=dict(color=colr, width=3)))
+            fig = ui.plot_style(fig, 290); fig.update_yaxes(title='expected points gained')
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+    html('<div class="note" style="margin-top:8px"><b>How to read this.</b> Each number is the expected points a chip adds in that gameweek for <i>your</i> squad. '
+         'Bench Boost = your bench\'s points. Triple Captain = one extra helping of your captain. Free Hit = the best one-week team you could afford minus your team. '
+         'Wildcard = a full rebuild over the next 4 weeks minus what your normal free transfers would do (only shown for the next 6 weeks). '
+         'Later weeks assume you keep this squad and use today\'s form, so they are rougher. <b>Double gameweeks change everything:</b> FPL usually announces them a few weeks ahead, '
+         'and this plan updates automatically when they appear. The plan follows the rules: one chip per week, no Free Hit in two weeks running, and the first set expires at the GW19 deadline.</div>')
 
 # ================================================================== CAPTAIN
 elif page == 'Captain':

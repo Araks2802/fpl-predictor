@@ -9,7 +9,7 @@ for p, n in {1: 2, 2: 5, 3: 5, 4: 3}.items():
         if P.team_id[i] not in used: pick[p].append(int(i)); used.add(P.team_id[i])
         if len(pick[p]) == n: break
 CASES = []
-for page in ['My team', 'Compare', 'Transfers', 'Planner', 'Captain', 'Differentials', 'Players', 'Fixtures', 'How it works']:
+for page in ['My team', 'Transfers', 'Planner', 'Captain', 'Chips', 'Differentials', 'Compare', 'Players', 'Fixtures', 'How it works']:
     for setup in ('none', 'id', 'manual'): CASES.append((page, setup, {}))
 CASES += [('Transfers', 'manual', {'chip': 'Wildcard'}), ('Transfers', 'manual', {'chip': 'Free Hit'}), ('Transfers', 'id', {'plan': '1 GW'}),
           ('Players', 'none', {'hz_pl': 'Season'}), ('Differentials', 'id', {'hz_dif': 'Season', 'own_dif': 5}), ('My team', 'id', {'boost': 30}), ('Compare', 'none', {'cmp': [411, 379, 1, 4], 'cmp_gw': 'GW12'}), ('Compare', 'none', {'cmp': []}), ('Fixtures', 'none', {'tf_sort': 'Defence (xG against)'}), ('Compare', 'none', {'cmp': [202, 60, 411]}),

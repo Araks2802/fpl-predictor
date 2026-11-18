@@ -86,7 +86,8 @@ def load_entry(eid, boot):
         rows.append(dict(id=pid, buy=buy, now=now, sell=sell_price(buy, now), pos=el[pid]['element_type']))
     squad = pd.DataFrame(rows)
     return dict(name=entry['name'], manager=f"{entry['player_first_name']} {entry['player_last_name']}", squad=squad, bank=bank,
-                free_transfers=free_transfers(hist, start, cur), chips_left=chips_left(hist, cur + 1), points=entry['summary_overall_points'],
+                free_transfers=free_transfers(hist, start, cur), chips_left=chips_left(hist, cur + 1), chips_used=chips_used(hist),
+                points=entry['summary_overall_points'],
                 rank=entry['summary_overall_rank'], squad_gw=gw)
 
 
@@ -101,11 +102,81 @@ def free_transfers(hist, start, cur):
     return ft
 
 
+CHIP_NAMES = {'wildcard': 'Wildcard', 'freehit': 'Free Hit', 'bboost': 'Bench Boost', '3xc': 'Triple Captain'}
+HALVES = {1: (1, 19), 2: (20, 38)}         # each half has its own full set of 4 chips
+
+
 def chips_left(hist, next_gw):
-    half = (2, 19) if next_gw <= 19 else (20, 38)
+    half = HALVES[1] if next_gw <= 19 else HALVES[2]
     used = {c['name'] for c in hist['chips'] if half[0] <= c['event'] <= half[1]}
-    names = {'wildcard': 'Wildcard', 'freehit': 'Free Hit', 'bboost': 'Bench Boost', '3xc': 'Triple Captain'}
-    return [v for k, v in names.items() if k not in used]
+    return [v for k, v in CHIP_NAMES.items() if k not in used]
+
+
+def chips_used(hist):
+    """[(chip name, gameweek)] for every chip played this season."""
+    return [(CHIP_NAMES.get(c['name'], c['name']), c['event']) for c in hist['chips']]
+
+
+# ------------------------------------------------------------------ chip planner
+def chip_values(P, squad, bank, ft, gws, wc_window=4, wc_starts=6):
+    """What each chip is worth in each gameweek for this squad (expected points gained by playing it that week).
+
+    Bench Boost    the bench's projected points that week (they count when it is on).
+    Triple Captain one extra helping of the captain's projected points.
+    Free Hit       best possible XI for that one week (same budget) minus your own XI that week.
+    Wildcard       over the wc_window weeks from that week: best rebuilt squad minus what your normal free transfers achieve.
+                   Only worked out for the first wc_starts weeks (it needs the most computing and plans that far ahead change anyway).
+    All values assume you keep this squad until then, so later weeks are rougher.
+    """
+    ids = [int(i) for i in squad.id]; rows = []
+    for k, g in enumerate(gws):
+        xi, cap, vice, bench = best_xi(ids, P, g); xp = P[f'xp_{g}']
+        own = xp[xi].sum() + xp[cap]
+        try:
+            fh = optimise(P, [g], squad, bank, ft, chip='Free Hit')
+            xi2, cap2, _, _ = best_xi(fh['squad'], P, g); fh_gain = P.loc[xi2, f'xp_{g}'].sum() + P.loc[cap2, f'xp_{g}'] - own
+        except ValueError:
+            fh_gain = np.nan
+        wc_gain = np.nan
+        if k < wc_starts:
+            win = gws[k:k + wc_window]
+            try:
+                a = optimise(P, win, squad, bank, ft, chip='Wildcard'); b = optimise(P, win, squad, bank, ft, max_transfers=max(ft, 1))
+                wc_gain = squad_points(P, a['squad'], win)[0] - (squad_points(P, b['squad'], win)[0] - HIT * b['hits'])
+            except ValueError:
+                pass
+        n_fix = P[f'opp_{g}'].map(lambda o: 0 if o == '-' else o.count(',') + 1)
+        rows.append(dict(gw=g, bb=xp[bench].sum(), tc=xp[cap], tc_name=P.name[cap], fh=fh_gain, wc=wc_gain, own=own,
+                         doubles=int(P.assign(n=n_fix).groupby('team').n.first().ge(2).sum()), blanks=int(P.assign(n=n_fix).groupby('team').n.first().eq(0).sum())))
+    return pd.DataFrame(rows).set_index('gw')
+
+
+def plan_chips(V, available, fh_banned=()):
+    """Best gameweek for each available chip: one chip per week, Free Hit never in two weeks running (and not in fh_banned weeks).
+    Tries every combination, which is tiny (at most 4 chips over 19 weeks)."""
+    from itertools import permutations
+    col = {'Bench Boost': 'bb', 'Triple Captain': 'tc', 'Free Hit': 'fh', 'Wildcard': 'wc'}
+    chips = [c for c in available if c in col]
+    best, best_plan = -1e9, {}
+    gws = list(V.index)
+
+    def val(c, g):
+        v = V.loc[g, col[c]]
+        if c == 'Free Hit' and g in fh_banned: return np.nan
+        return v
+
+    def search(i, used, plan, tot):
+        nonlocal best, best_plan
+        if i == len(chips):
+            if tot > best: best, best_plan = tot, dict(plan)
+            return
+        c = chips[i]
+        options = [g for g in gws if g not in used and pd.notna(val(c, g))]
+        for g in options:
+            plan[c] = g; search(i + 1, used | {g}, plan, tot + val(c, g)); del plan[c]
+        if not options: search(i + 1, used, plan, tot)
+    search(0, set(), {}, 0.0)
+    return best_plan
 
 
 # ------------------------------------------------------------------ optimiser
