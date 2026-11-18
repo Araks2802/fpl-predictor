@@ -403,7 +403,11 @@ elif page == 'Chips':
         col = {'Bench Boost': 'bb', 'Triple Captain': 'tc', 'Free Hit': 'fh', 'Wildcard': 'wc'}
         plan_cards = []
         for c in ALLC:
-            if c in plan: plan_cards.append((f'GW{plan[c]}', f'{ICON[c]} <b>{c}</b> · {why[c](plan[c])}', 'g'))
+            if c in plan:
+                vals = V[col[c]].dropna(); edge = vals.max() - vals.median()
+                # if the best week is barely better than a typical week, say so: a double gameweek would usually beat all of them
+                flat = ' <span style="color:#ffab1b">· no standout week yet: a double gameweek would usually be worth more</span>' if edge < 1.0 and not V.doubles.any() else ''
+                plan_cards.append((f'GW{plan[c]}', f'{ICON[c]} <b>{c}</b> · {why[c](plan[c])}{flat}', 'g'))
             elif c in left: plan_cards.append(('Later', f'{ICON[c]} <b>{c}</b> · decide nearer the time (needs fixtures and team news)', ''))
         html('<div class="note" style="margin:6px 0 2px 0"><b style="color:#fff">Suggested plan</b> · one chip per gameweek</div>' + ui.cards(plan_cards))
         # per-gameweek values, best week per chip highlighted
@@ -414,8 +418,9 @@ elif page == 'Chips':
             cells = ''
             for c in show:
                 v = V.loc[g, col[c]]
-                txt = '-' if pd.isna(v) else (f'+{v:.1f}' + (f' <span class="note">({ui.esc(V.tc_name[g])})</span>' if c == 'Triple Captain' else ''))
                 best_ = plan.get(c) == g
+                nm_style = 'color:#37003c;font-weight:600' if best_ else 'color:#b9a7c2'
+                txt = '-' if pd.isna(v) else (f'+{v:.1f}' + (f' <span style="{nm_style}">({ui.esc(V.tc_name[g])})</span>' if c == 'Triple Captain' else ''))
                 cells += f'<td style="{"color:#1b0021;background:#00ff87;font-weight:800" if best_ else ""}">{txt}</td>'
             fx = ('<b style="color:#04f5ff">' + f'{V.doubles[g]} doubles</b> ' if V.doubles[g] else '') + (f'<b style="color:#e90052">{V.blanks[g]} blanks</b>' if V.blanks[g] else '')
             body += f'<tr><td><b>GW{g}</b></td>{cells}<td>{fx or "normal"}</td></tr>'
