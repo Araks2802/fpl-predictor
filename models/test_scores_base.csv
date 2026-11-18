@@ -1,0 +1,5 @@
+predictor,RMSE,MAE,rank corr (per GW),avg pts of top-10 picks,features
+last5,2.228,1.231,0.661,4.588,base
+gbm,2.059,1.168,0.698,4.688,base
+mlp,2.061,1.153,0.694,4.388,base
+blend,2.056,1.159,0.698,4.325,base

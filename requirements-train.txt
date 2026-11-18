@@ -1,0 +1,6 @@
+# training and the scheduled update job (GitHub Actions). The app itself only needs requirements.txt.
+-r requirements.txt
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.4
+scikit-learn==1.6.1
+joblib==1.4.2

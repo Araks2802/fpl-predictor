@@ -1,0 +1,11 @@
+__pycache__/
+.DS_Store
+.ipynb_checkpoints/
+# past seasons are downloaded by fetch_history.py when training
+data/2022-23/
+data/2023-24/
+data/2024-25/
+data/2025-26/
+# large investigation output
+models/bias_2025_26.parquet
+notebooks/

@@ -1,0 +1,56 @@
+name: Update FPL predictions
+
+# Every hour. auto_update.py decides whether to retrain (after a gameweek), do the late team-news refresh
+# (about 2 hours and 1 hour before each deadline), do a daily refresh, or do nothing.
+on:
+  schedule:
+    - cron: '7 * * * *'        # minute 7 of every hour (UTC). GitHub can start scheduled runs a few minutes late.
+  workflow_dispatch:            # lets you run it by hand from the Actions tab
+
+permissions:
+  contents: write               # needed to push the new predictions
+
+concurrency:
+  group: fpl-update
+  cancel-in-progress: false     # never run two updates at once
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-train.txt
+
+      - name: Install
+        run: pip install -r requirements-train.txt
+
+      - name: Cache past seasons
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/2022-23
+            data/2023-24
+            data/2024-25
+            data/2025-26
+          key: fpl-history-v1
+
+      - name: Update
+        run: python auto_update.py
+
+      - name: Commit if anything changed
+        run: |
+          git config user.name "fpl-bot"
+          git config user.email "fpl-bot@users.noreply.github.com"
+          git add data/predictions.parquet data/meta.json data/update_log.json data/2026-27 models
+          if git diff --cached --quiet; then
+            echo "nothing changed"
+          else
+            git commit -m "Update predictions: $(python -c "import json;print(json.load(open('data/update_log.json')).get('update_type',''))")"
+            git push
+          fi
