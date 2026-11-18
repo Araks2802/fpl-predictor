@@ -16,6 +16,16 @@ h1, h2, h3, h4, .hero-title, .sec, .card .v, .pname, .bigname {font-family: 'Out
 .block-container {padding-top: 1.4rem; max-width: 1280px;}
 [data-testid="stSidebar"] {background: linear-gradient(180deg, #37003c 0%, #22002a 100%); border-right: 1px solid rgba(255,255,255,.06);}
 [data-testid="stHeader"] {background: transparent;}
+/* hide Streamlit Cloud's Share / Star / GitHub / Deploy buttons, the main menu and the hosting badges. The sidebar toggle stays. */
+[data-testid="stToolbarActions"], [data-testid="stAppDeployButton"], .stAppDeployButton, [data-testid="stMainMenu"], #MainMenu,
+[data-testid="stToolbarActionButton"], [data-testid="stStatusWidget"] a, [class*="viewerBadge"], [data-testid="appCreatorAvatar"],
+a[href*="streamlit.io/cloud"], a[href^="https://github.com"][target="_blank"][class*="st-"] {display: none !important;}
+footer {visibility: hidden;}
+.credit {margin-top: 34px; padding: 16px 0 6px 0; border-top: 1px solid rgba(255,255,255,.08); color: #b9a7c2; font-size: .82rem;
+  display: flex; flex-wrap: wrap; gap: 6px 18px; justify-content: space-between; align-items: center;}
+.credit b {color: #ffffff; font-family: 'Outfit';} .credit a {color: #00ff87; text-decoration: none;} .credit a:hover {text-decoration: underline;}
+.sb-credit {margin-top: 18px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,.1); color: #b9a7c2; font-size: .8rem; line-height: 1.5;}
+.sb-credit b {color: #ffffff;} .sb-credit a {color: #00ff87; text-decoration: none;}
 .hero {border-radius: 18px; padding: 22px 26px; margin-bottom: 14px; position: relative; overflow: hidden;
   background: linear-gradient(110deg, #37003c 0%, #5a0a63 45%, #0b6a5a 100%); border: 1px solid rgba(255,255,255,.08);}
 .hero:after {content: ''; position: absolute; right: -60px; top: -60px; width: 260px; height: 260px; border-radius: 50%;
@@ -83,6 +93,22 @@ table.fpl tr:hover td {background: rgba(0,255,135,.07);}
 div[data-testid="stSegmentedControl"] button, div[data-testid="stPills"] button {font-family: 'Outfit' !important; font-weight: 600;}
 </style>
 """
+
+
+SITE = 'https://pranav-analysis.arakkal-pranav.workers.dev'
+LINKEDIN = ''          # your LinkedIn profile, e.g. https://www.linkedin.com/in/your-name  (the link is hidden while this is blank)
+
+
+def _links(sep=' · '):
+    out = [f'<a href="{SITE}" target="_blank" rel="noopener">Portfolio ↗</a>']
+    if LINKEDIN: out.append(f'<a href="{LINKEDIN}" target="_blank" rel="noopener">LinkedIn ↗</a>')
+    out.append('<a href="mailto:arakkal.pranav@gmail.com">Email</a>')
+    return sep.join(out)
+
+
+CREDIT = (f'<div class="credit"><span>Built by <b>Pranav Arakkal</b> · data, models and app</span><span>{_links()}</span>'
+          '<span>Not affiliated with the Premier League or Fantasy Premier League. Data: FPL API.</span></div>')
+SB_CREDIT = f'<div class="sb-credit">Built by <b>Pranav Arakkal</b><br>{_links()}</div>'
 
 
 def shirt(team_code, gk=False):

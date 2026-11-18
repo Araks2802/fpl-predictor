@@ -91,6 +91,7 @@ with st.sidebar:
             team['bank'] = int(round(st.number_input('Bank (£m)', 0.0, 100.0, team['bank'] / 10, 0.1, key='bank') * 10))
             team['free_transfers'] = st.number_input('Free transfers', 0, 5, int(team['free_transfers']), key='ft')
             st.caption('Worked out from your public transfer history. Check against the FPL site.')
+    html(ui.SB_CREDIT)
 
 # ------------------------------------------------------------------ header and navigation
 def _ago(t):
@@ -102,6 +103,11 @@ html(f'<div class="hero"><div class="hero-title">{ui.esc(team["name"]) if team e
      f'<div class="hero-sub">{ui.esc(sub)}</div>'
      f'<span class="pill g">GW{G0} · {deadline:%a %d %b %H:%M} UTC</span><span class="pill">Deadline in {countdown}</span>{updated_pill}</div>')
 page = st.segmented_control('Page', ['My team', 'Transfers', 'Planner', 'Captain', 'Differentials', 'Compare', 'Players', 'Fixtures', 'How it works'], default='My team', label_visibility='collapsed', key='nav') or 'My team'
+
+
+def done():
+    """End the page: the credit footer, then stop. Used instead of st.stop() so the footer shows on every page."""
+    html(ui.CREDIT); st.stop()
 
 
 def need_team():
@@ -127,7 +133,7 @@ def pairs(res):
 
 # ================================================================== MY TEAM
 if page == 'My team':
-    if team is None: need_team(); st.stop()
+    if team is None: need_team(); done()
     ids = tuple(int(i) for i in team['squad'].id)
     gw_lab = st.segmented_control('Gameweek', [f'GW{g}' for g in ALL_GWS[:6]], default=f'GW{G0}', label_visibility='collapsed') or f'GW{G0}'
     gw = int(gw_lab[2:]); xp = P[f'xp_{gw}']
@@ -167,7 +173,7 @@ if page == 'My team':
 
 # ================================================================== TRANSFERS
 elif page == 'Transfers':
-    if team is None: need_team(); st.stop()
+    if team is None: need_team(); done()
     ids = [int(i) for i in team['squad'].id]
     c1, c2, c3, c4 = st.columns([1.2, 1.2, 1, 1])
     plan = c1.segmented_control('Plan over', ['1 GW', '3 GWs'], default='3 GWs', key='plan') or '3 GWs'
@@ -188,7 +194,7 @@ elif page == 'Transfers':
             except ValueError: continue
             v, _ = fe.squad_points(P, res['squad'], res['gws'])
             opts.append((k, res, v - base - fe.HIT * res['hits']))
-    if not opts: st.error('No legal squad can be reached with these settings. Check the never buy and always keep lists.'); st.stop()
+    if not opts: st.error('No legal squad can be reached with these settings. Check the never buy and always keep lists.'); done()
     k, res, gain = opts[-1]
     sec('Suggested transfers', f'planning over GW{res["gws"][0]}' + (f' to GW{res["gws"][-1]}, later weeks count a little less' if len(res['gws']) > 1 else ''))
     if not res['inn']:
@@ -264,7 +270,7 @@ elif page == 'Compare':
 
 # ================================================================== PLANNER: try your own transfers
 elif page == 'Planner':
-    if team is None: need_team(); st.stop()
+    if team is None: need_team(); done()
     sq = team['squad'].set_index('id'); ids = [int(i) for i in sq.index]
     c1, c2 = st.columns([2, 1.3])
     hz = c2.segmented_control('Judge over', ['Next GW', 'Next 3'], default='Next 3', key='hz_plan') or 'Next 3'
@@ -357,7 +363,7 @@ elif page == 'Differentials':
 
 # ================================================================== CAPTAIN
 elif page == 'Captain':
-    if team is None: need_team(); st.stop()
+    if team is None: need_team(); done()
     ids = tuple(int(i) for i in team['squad'].id)
     xi, cap, vice, bench = lineup(ids, G0, BOOST); xp = P[f'xp_{G0}']
     c = sorted(xi, key=lambda i: -xp[i])[:8]
@@ -476,3 +482,5 @@ Tested on this season from Gameweek 3, which the models never saw:""")
          'so the model expects some return to normal. The app uses the team-based clean-sheet model.</div>')
     html('<div class="note" style="margin-top:10px">Regular starters only. FPL points are very random: one goal changes a score by 4 to 10 points, so a typical error of about 3 is normal. '
          'The model ranks players better than recent form, but nobody can tell you who will score this weekend. Projections further ahead hold each player\'s form at today\'s level, so they are rougher.</div>')
+
+html(ui.CREDIT)
