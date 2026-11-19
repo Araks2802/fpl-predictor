@@ -1472,7 +1472,9 @@ Tested on this season from Gameweek 3, which the models never saw:""")
     html('<div class="sec" style="font-size:1.05rem">Chances: predicted vs what happened</div><table class="fpl"><tr><th>Event</th><th>Predicted rate</th><th>Actual rate</th><th>Top 200 predicted</th><th>Top 200 actual</th><th>Better than guessing the average</th></tr>' +
          ''.join(f'<tr><td><b>{evn[r.event]}</b></td><td>{100 * r._3:.1f}%</td><td>{100 * r._2:.1f}%</td><td>{100 * r._7:.1f}%</td><td>{100 * r._8:.1f}%</td><td>{r._4:.0f}%</td></tr>' for r in ev.itertuples()) + '</table>')
     html('<div class="note" style="margin-top:6px">Clean sheets are running hot this season (29% of team games, against 21% to 27% in the last four seasons and about 23% expected from the chances teams allow), '
-         'so the model expects some return to normal. The app uses the team-based clean-sheet model.</div>')
+         'so the model expects some return to normal. The clean-sheet chance shown in the app comes from expected goals: the opponent\'s xG per game and the team\'s xG '
+         'against per game give the goals the team should concede, and from that the chance of conceding none. The points model uses the same estimate, so the two always agree. '
+         'Tested on 3,240 team-matches since 2022-23, it was more accurate than a separate clean-sheet model in every season.</div>')
     html('<div class="note" style="margin-top:10px">Regular starters only. FPL points are very random: one goal changes a score by 4 to 10 points, so a typical error of about 3 is normal. '
          'The model ranks players better than recent form, but nobody can tell you who will score this weekend. Projections further ahead hold each player\'s form at today\'s level, so they are rougher.</div>')
 
