@@ -82,7 +82,7 @@ if BOOST:
 deadline = datetime.fromisoformat(meta['deadline'].replace('Z', '+00:00'))
 left = deadline - datetime.now(timezone.utc)
 countdown = f'{left.days}d {left.seconds // 3600}h' if left.total_seconds() > 0 else 'deadline passed'
-HORIZONS = {'Next GW': 1, 'Next 3': 3, 'Next 6': 6, 'Season': len(ALL_GWS)}   # Season = all remaining gameweeks
+HORIZONS = {'Next GW': 1, 'Next 2': 2, 'Next 3': 3, 'Next 6': 6, 'Season': len(ALL_GWS)}   # Season = all remaining gameweeks
 for n in HORIZONS.values(): P[f'h{n}'] = sum(P[f'xp_{g}'] for g in ALL_GWS[:n])
 LAB = {i: f'{r["name"]} ({r.team}, £{r.price:.1f}m)' for i, r in P.iterrows()}
 html = lambda s: st.markdown(s, unsafe_allow_html=True)
@@ -1136,7 +1136,7 @@ elif page == 'Captain':
 elif page == 'Players':
     f1, f2, f3 = st.columns([1.3, 1.9, 1])
     pos = f1.pills('Position', ['GK', 'DEF', 'MID', 'FWD'], selection_mode='multi', default=['GK', 'DEF', 'MID', 'FWD'])
-    hz = f2.segmented_control('Projected over', list(HORIZONS), default='Next GW', key='hz_pl') or 'Next GW'
+    hz = f2.segmented_control('Projected over', ['Next GW', 'Next 2', 'Next 3'], default='Next GW', key='hz_pl') or 'Next GW'
     sort = f3.selectbox('Sort by', ['Projected points', 'Edge vs other managers', 'Points per £m', 'Goal chance', 'Clean sheet chance', 'Defensive contribution chance', 'Bonus chance', 'Price', 'Ownership', 'Form'])
     g1, g2, g3, g4, g5 = st.columns([1.5, 1.4, 1, 0.7, 0.9])
     teams = g1.multiselect('Teams', sorted(P.team.unique()), placeholder='All teams')
