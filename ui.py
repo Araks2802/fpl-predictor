@@ -100,6 +100,9 @@ footer {visibility: hidden;}
 [class*="st-key-ppin_"] button {background: #00ff87;} [class*="st-key-ppmv_"] button {background: #04f5ff;}
 [class*="st-key-pp"] button:hover {background: #ebff00; color: #1b0021; outline: 2px solid #ebff00;}
 [class*="st-key-pp"] button:focus:not(:hover), [class*="st-key-pp"] button:active:not(:hover) {color: #37003c; box-shadow: none;}
+/* the team ID box in the sidebar: green, like the selected buttons */
+.st-key-eid label {display: inline-flex; align-items: center; gap: 8px; width: auto; background: rgba(0,255,135,.1); border: 1px solid #00ff87; border-radius: 8px; padding: 3px 10px; margin-bottom: 6px;}
+.st-key-eid label p {color: #00ff87 !important; font-weight: 600;}
 .hint {display: inline-flex; align-items: center; gap: 8px; background: rgba(235,255,0,.12); border: 1px solid rgba(235,255,0,.4); color: #ebff00; border-radius: 999px;
   padding: 4px 12px; font-size: .82rem; font-weight: 600; margin: 2px 0 8px 0;}
 .bench {background: rgba(0,0,0,.25); border-radius: 0 0 18px 18px; margin: -6px 0 0 0; padding: 12px 8px 6px 8px; border: 1px solid rgba(255,255,255,.08); border-top: none;}
