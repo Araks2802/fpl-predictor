@@ -13,12 +13,12 @@ for p, n in {1: 2, 2: 5, 3: 5, 4: 3}.items():
 import json as _j, fpl_engine as _fe
 TEAM1 = tuple(sorted(int(i) for i in _fe.load_entry(1, _j.load(open('data/2026-27/bootstrap.json')))['squad'].id))
 CASES = []
-for page in ['My team', 'Transfers', 'Planner', 'Captain', 'Chips', 'League', 'Compare', 'Players', 'Fixtures', 'How it works']:
+for page in ['My team', 'Transfers', 'Planner', 'Captain', 'Chips', 'League', 'Compare', 'Players', 'Fixtures', 'Review', 'How it works']:
     for setup in ('none', 'id', 'manual'): CASES.append((page, setup, {}))
 CASES += [('Transfers', 'manual', {'chip': 'Wildcard'}), ('Transfers', 'manual', {'chip': 'Free Hit'}), ('Transfers', 'id', {'plan': '1 GW'}), ('Transfers', 'id', {'hits': True}), ('Transfers', 'manual', {'chip': 'Wildcard', 'plan': '2 GWs'}),
-          ('Players', 'none', {'hz_pl': 'Season'}), ('My team', 'id', {'boost': 30}), ('Compare', 'none', {'cmp': [411, 379, 1, 4], 'cmp_gw': 'GW12'}), ('Compare', 'none', {'cmp': []}), ('Fixtures', 'none', {'tf_sort': 'Defence (xG against)'}), ('League', 'id', {'lid': '5508'}),
+          ('Players', 'none', {'hz_pl': 'Season'}), ('My team', 'id', {'boost': 30}), ('Compare', 'none', {'cmp': [411, 379, 1, 4], 'cmp_gw': 'GW12'}), ('Compare', 'none', {'cmp': []}), ('Fixtures', 'none', {'tf_sort': 'Defence (xG against)'}), ('League', 'id', {'_lid': '5508'}), ('Review', 'id', {'rv_gw': 3}), ('Review', 'none', {'rv_sort': 'Beat prediction most', 'rv_played': False}),
           ('My team', 'id', {'made': [(569, 79)], '_made_for': '1'}), ('Transfers', 'id', {'made': [(569, 79), (8, 112)], '_made_for': '1'}),
-          ('Planner', 'id', {'made': [(569, 79)], '_made_for': '1'}), ('My team', 'id', {'made': [(569, 411)], '_made_for': '1'}), ('My team', 'id', {'made': [(569, 379), (8, 4)], '_made_for': '1'}), ('League', 'id', {'lid': '5508', 'h2h_hz': 'Next 3'}), ('League', 'none', {'lid': '5508'}), ('League', 'id', {'lid': '1757', 'lstyle': 'Chase'}), ('League', 'id', {'lid': '999999999'}),
+          ('Planner', 'id', {'made': [(569, 79)], '_made_for': '1'}), ('My team', 'id', {'made': [(569, 411)], '_made_for': '1'}), ('My team', 'id', {'made': [(569, 379), (8, 4)], '_made_for': '1'}), ('League', 'id', {'_lid': '5508', 'h2h_hz': 'Next 3'}), ('League', 'none', {'_lid': '5508'}), ('League', 'id', {'_lid': '1757', 'lstyle': 'Chase'}), ('League', 'id', {'_lid': '999999999'}),
           ('Planner', 'id', {'pl_team': ('Solio Moose', TEAM1), 'pl_moves': [dict(gw=11, out=569, inn=79)]}),
           ('Planner', 'id', {'pl_team': ('Solio Moose', TEAM1), 'pl_moves': [dict(gw=11, out=569, inn=79), dict(gw=12, out=8, inn=112), dict(gw=12, out=566, inn=4)], 'pl_gw': 'GW12'}),
           ('Planner', 'id', {'pl_team': ('Solio Moose', TEAM1), 'pl_moves': [dict(gw=11, out=569, inn=411)]}),

@@ -8,10 +8,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 import numpy as np, pandas as pd, plotly.graph_objects as go, requests, streamlit as st
 import fpl_engine as fe, ui
+try:                                     # browser storage: remembers your team, league and confirmed transfers between visits
+    from streamlit_js_eval import streamlit_js_eval as js_eval
+except ImportError:
+    js_eval = None
+LS_KEY = 'fpl_predictor_v1'
 
 ROOT = Path(__file__).parent
 st.set_page_config(page_title='FPL Points Predictor', page_icon='⚽', layout='wide', initial_sidebar_state='expanded')
 st.markdown(ui.CSS, unsafe_allow_html=True)
+# ask the browser for what it saved last time, as the very first element of the page (its answer triggers one rerun)
+if js_eval is not None and not st.session_state.get('_ls_ok'):
+    st.session_state['_ls_raw'] = js_eval(js_expressions=f"localStorage.getItem('{LS_KEY}') || ''", key='ls_get')
 POS = ui.POS
 
 
@@ -151,18 +159,6 @@ def confirm_block(new, made_now, team_, gw, after=None, key='cf'):
     return b
 
 
-@st.dialog('Remove a confirmed transfer?')
-def remove_made_dialog(k, made_now):
-    o, i = made_now[k]
-    html(f'<div class="note">Remove <b style="color:#e90052">{ui.esc(P.name[o])}</b> → <b style="color:#00ff87">{ui.esc(P.name[i])}</b>?</div>'
-         '<div class="note" style="margin:8px 0">Only do this if you added it <b style="color:#fff">by mistake</b>. If you really made it in the FPL app, keep it: '
-         'FPL will not undo it, and removing it here would make the app plan from the wrong team.</div>')
-    a, b = st.columns(2)
-    if a.button('Yes, remove it', type='primary', use_container_width=True, key='rm_yes'):
-        set_made(made_now[:k] + made_now[k + 1:]); st.rerun()
-    if b.button('Keep it', use_container_width=True, key='rm_no'): st.rerun()
-
-
 @st.dialog('Confirm your transfers')
 def confirm_dialog(new, made_now, team_, gw, after=None):
     b = confirm_block(new, made_now, team_, gw, after)
@@ -252,7 +248,46 @@ def remember_save(key, qp):
     elif qp in st.query_params: del st.query_params[qp]
 
 
-remember('eid', 'team'); remember('lid', 'league')
+def ls_read():
+    """Read what this browser saved last time (team ID, league ID, confirmed transfers for the current gameweek).
+    The browser answers on the next rerun, so the first run of a visit sees nothing; the app reruns by itself when the answer arrives."""
+    S = st.session_state
+    if js_eval is None or S.get('_ls_ok'): return
+    raw = S.get('_ls_raw')
+    if raw is None: return                                   # not answered yet
+    try: data = json.loads(raw) if raw else {}
+    except Exception: data = {}
+    S['_ls_ok'] = True; S['_ls'] = data
+    if not str(S.get('eid', '') or '').strip() and data.get('eid'): S['eid'] = S['_eid'] = data['eid']
+    if not str(S.get('_lid', '') or '').strip() and data.get('lid'): S['_lid'] = data['lid']
+    by = S.setdefault('made_by_team', {})
+    for tid_, ent in (data.get('made') or {}).items():
+        if ent.get('gw') == G0 and tid_ not in by:           # only this gameweek's: once the next gameweek starts they are dropped
+            by[tid_] = [tuple(p_) for p_ in ent.get('pairs', [])]
+    S.pop('_made_for', None)                                 # reload your confirmed transfers with what the browser remembered
+
+
+def ls_write():
+    """Save your team ID, league ID and confirmed transfers (this gameweek only) in this browser. Only written when something changed."""
+    S = st.session_state
+    if js_eval is None or not S.get('_ls_ok'): return
+    made_all = {t: dict(gw=G0, pairs=[list(p_) for p_ in v]) for t, v in S.get('made_by_team', {}).items() if v}
+    data = dict(eid=str(S.get('_eid', '') or ''), lid=str(S.get('_lid', '') or ''), made=made_all)
+    blob = json.dumps(data, sort_keys=True)
+    if blob == S.get('_ls_written'): return
+    js_eval(js_expressions=f"localStorage.setItem('{LS_KEY}', {json.dumps(blob)})", key=f'ls_set_{abs(hash(blob))}')
+    S['_ls_written'] = blob
+
+
+ls_read()
+remember('eid', 'team')
+if '_lid' not in st.session_state: st.session_state['_lid'] = st.query_params.get('league', '')
+
+
+def save_lid():
+    v = str(st.session_state.get('lid_box', '')).strip(); st.session_state['_lid'] = v
+    if v.isdigit(): st.query_params['league'] = v
+    elif 'league' in st.query_params: del st.query_params['league']
 
 with st.sidebar:
     if BOOST: st.caption(f'Form boost on: {BOOST:.0%}')
@@ -288,6 +323,7 @@ with st.sidebar:
         if st.session_state.get('_made_for') != tid:                     # a different team: load ITS confirmed transfers (never another team's)
             st.session_state['_made_for'] = tid
             st.session_state['made'] = load_made(tid)
+            if st.session_state['made']: st.session_state.setdefault('made_by_team', {})[tid] = list(st.session_state['made'])
             if st.session_state['made']: st.query_params['made'] = f'{tid}~' + ','.join(f'{o}-{i}' for o, i in st.session_state['made'])
             elif 'made' in st.query_params: del st.query_params['made']
         made = st.session_state.setdefault('made', [])
@@ -295,10 +331,8 @@ with st.sidebar:
         if len(made_ok) < len(made): st.session_state['made'] = made = made_ok
         with st.expander(f'Transfers already made for GW{G0}' + (f' ({len(made)})' if made else ''), expanded=bool(made)):
             st.caption('Made a transfer in the FPL app? FPL keeps it private until the deadline, so add it here and every tab will use your new team.')
-            for k, (o_, i_) in enumerate(made):
-                a_, b_ = st.columns([5, 1.1])
-                a_.markdown(f'<div class="note">🔒 <b style="color:#e90052">{ui.esc(P.name[o_])}</b> → <b style="color:#00ff87">{ui.esc(P.name[i_])}</b></div>', unsafe_allow_html=True)
-                if b_.button('✕', key=f'made_rm_{k}', help='Entered by mistake? Remove it'): remove_made_dialog(k, made)
+            for o_, i_ in made:      # confirmed transfers are locked, like in FPL: no undo
+                st.markdown(f'<div class="note">🔒 <b style="color:#e90052">{ui.esc(P.name[o_])}</b> → <b style="color:#00ff87">{ui.esc(P.name[i_])}</b></div>', unsafe_allow_html=True)
             if team.get('made_hits'):
                 st.markdown(f'<div class="note" style="color:#e90052"><b>−{fe.HIT * team["made_hits"]} hit</b> taken off your GW{G0} score.</div>', unsafe_allow_html=True)
             if team['free_transfers'] == 0:
@@ -316,6 +350,7 @@ with st.sidebar:
     html(ui.SB_CREDIT)
 
 HIT0 = fe.HIT * team.get('made_hits', 0) if team is not None else 0     # points hit from your confirmed GW11 transfers
+ls_write()
 
 # ------------------------------------------------------------------ header and navigation
 def _ago(t):
@@ -326,7 +361,7 @@ sub = (f"{team['manager']} · {team['points']} pts · rank {team['rank']:,}" if 
 html(f'<div class="hero"><div class="hero-title">{ui.esc(team["name"]) if team else "Your FPL team,"} <span>{"GW" + str(G0) if team else "projected."}</span></div>'
      f'<div class="hero-sub">{ui.esc(sub)}</div>'
      f'<span class="pill g">GW{G0} · {deadline:%a %d %b %H:%M} UTC</span><span class="pill">Deadline in {countdown}</span>{updated_pill}</div>')
-page = st.segmented_control('Page', ['My team', 'Transfers', 'Planner', 'Captain', 'Chips', 'League', 'Compare', 'Players', 'Fixtures', 'How it works'], default='My team', label_visibility='collapsed', key='nav') or 'My team'
+page = st.segmented_control('Page', ['My team', 'Transfers', 'Planner', 'Captain', 'Chips', 'League', 'Compare', 'Players', 'Fixtures', 'Review', 'How it works'], default='My team', label_visibility='collapsed', key='nav') or 'My team'
 
 
 def done():
@@ -814,7 +849,8 @@ elif page == 'Planner':
 # ================================================================== LEAGUE: beat your rivals
 elif page == 'League':
     c1, c2 = st.columns([2, 1])
-    lid = c1.text_input('Mini-league ID', key='lid', placeholder='e.g. 123456', on_change=remember_save, args=('lid', 'league'),
+    # the box starts from the saved league ID every time it is drawn, so it stays filled across tabs, refreshes and visits
+    lid = c1.text_input('Mini-league ID', value=st.session_state.get('_lid', ''), key='lid_box', placeholder='e.g. 123456', on_change=save_lid,
                         help='Open the league on the FPL website. The number after /leagues/ in the address is its ID (not the invite code).')
     if lid.strip(): st.session_state['_lid'] = lid.strip()        # keep it for when you come back from another tab
     if lid.strip().isdigit() and st.query_params.get('league') != lid.strip(): st.query_params['league'] = lid.strip()
@@ -1125,6 +1161,162 @@ elif page == 'Fixtures':
          f'<th>GW{G0} opponent</th><th>Clean sheet chance</th></tr>{body}</table>')
     html('<div class="note" style="margin-top:6px">Form uses the last 5 results. xG for and against use the last 10 games, pulled a little towards the league average. '
          'All of these feed the model, so a team in hot form or with a tight defence already lifts its players\' projections.</div>')
+
+# ================================================================== REVIEW: predicted vs what happened
+elif page == 'Review':
+    @st.cache_data(ttl=3600, show_spinner='Loading past gameweeks...')
+    def review_data():
+        """For every finished gameweek: each player's predicted points and chances, and what actually happened.
+        Weeks with a snapshot use exactly what the app showed before the deadline; GW3-10 use the back-test (a model that never saw those weeks)."""
+        H = pd.read_csv(ROOT / 'data' / '2026-27' / 'history.csv', low_memory=False)
+        done_gws = {e['id'] for e in boot['events'] if e['finished']}
+        act = H[H['round'].isin(done_gws)].groupby(['round', 'element']).agg(
+            actual=('total_points', 'sum'), minutes=('minutes', 'sum'), goals=('goals_scored', 'sum'), assists=('assists', 'sum'),
+            bonus=('bonus', 'sum'), cs=('clean_sheets', 'sum'), fixtures=('fixture', 'count')).reset_index().rename(columns={'round': 'gw'})
+        out = {}
+        anyp = lambda x: 1 - np.prod(1 - x.values)
+        try:
+            bt = pd.read_csv(ROOT / 'models' / 'test_predictions.csv'); bt = bt[bt.season == '2026-27']
+            try: ev = pd.read_csv(ROOT / 'models' / 'event_test_predictions.csv'); bt = bt.merge(ev, on=['season', 'gw', 'element', 'fixture'], how='left')
+            except FileNotFoundError: pass
+            agg = dict(pred=('blend', 'sum'), form=('last5', 'mean'))
+            for c in ('p_goal', 'p_assist', 'p_bonus', 'p_mins60'):
+                if c in bt: agg[c] = (c, anyp)
+            B = bt.groupby(['gw', 'element']).agg(**agg).reset_index().rename(columns={'p_mins60': 'p_60'})
+            for g_, d_ in B.groupby('gw'): out[int(g_)] = ('back-test', d_.drop(columns='gw'))
+        except FileNotFoundError: pass
+        snap_dir = ROOT / 'data' / 'snapshots'
+        for f in sorted(snap_dir.glob('gw*.parquet')) if snap_dir.exists() else []:
+            g_ = int(f.stem[2:])
+            if g_ not in done_gws: continue
+            sn = pd.read_parquet(f).reset_index().rename(columns={'id': 'element', 'xp': 'pred'})
+            out[g_] = ('snapshot', sn[['element', 'pred'] + [c for c in ('p_goal', 'p_assist', 'p_bonus', 'p_60', 'p_cs', 'p_dc') if c in sn]])
+        res = {}
+        for g_, (src, d_) in out.items():
+            a_ = act[act.gw == g_].drop(columns='gw')
+            m_ = d_.merge(a_, on='element', how='outer').fillna({'actual': 0, 'minutes': 0, 'goals': 0, 'assists': 0, 'bonus': 0, 'cs': 0, 'pred': 0})
+            res[g_] = (src, m_[m_.element.isin(P.index)])
+        return res
+
+    @st.cache_data(ttl=3600, show_spinner=False)
+    def my_picks(eid_, gw_):
+        try: return fe.get(f'entry/{int(eid_)}/event/{gw_}/picks/')
+        except Exception: return None
+
+    RV = review_data()
+    if not RV:
+        html('<div class="note">No finished gameweeks with predictions yet.</div>'); done()
+    gl = sorted(RV, reverse=True)
+    gsel = st.selectbox('Gameweek', gl, format_func=lambda g_: f'Gameweek {g_} · ' + ('what the app showed before the deadline' if RV[g_][0] == 'snapshot' else 'back-test'), key='rv_gw')
+    src, D = RV[gsel]
+    D = D.copy(); D['name'] = D.element.map(P.name); D['team'] = D.element.map(P.team); D['pos'] = D.element.map(P.pos); D['team_code'] = D.element.map(P.team_code)
+    D['diff'] = (D.actual - D.pred).where((D.actual - D.pred).abs() >= 0.05, 0.0)
+    html('<div class="note" style="margin:-4px 0 10px 0">' + (
+        f'These are the exact predictions the app showed before the GW{gsel} deadline.' if src == 'snapshot' else
+        f'Back-test: predictions from a model trained only on earlier seasons, so it had never seen GW{gsel}. From GW11 on, this tab shows exactly what the app showed before each deadline.') + '</div>')
+
+    # ---- how the model did this week
+    likely = D[D.pred >= 2.0]                                    # players the model expected to play: ranking among them is what matters
+    rank_acc = likely[['pred', 'actual']].corr(method='spearman').iloc[0, 1] if len(likely) > 5 else np.nan
+    top10 = D.nlargest(10, 'pred'); best10 = D.nlargest(10, 'actual')
+    form_top = D[D.pred >= 2.0].nlargest(10, 'form').actual.mean() if 'form' in D and D.form.notna().any() else None
+    cap = D.loc[D.pred.idxmax()]
+    rmse = float(np.sqrt(((likely.pred - likely.actual) ** 2).mean())) if len(likely) else np.nan
+    html(ui.cards([(f'{rank_acc:.2f}', 'ranking accuracy this week (1 = perfect order)', 'g'),
+                   (f'{top10.actual.mean():.1f}', 'avg points of the model\'s top 10' + (f' (top 10 by form: {form_top:.1f})' if form_top is not None else ''), 'c'),
+                   (f'{ui.esc(cap["name"])}: {cap.actual:.0f}', f'model\'s top pick scored (predicted {cap.pred:.1f})', ''),
+                   (f'{rmse:.1f}', 'typical miss in points, likely starters', '')]))
+
+    # ---- your team that week
+    eid_ = str(st.session_state.get('eid', '') or '').strip()
+    if team is not None and eid_.isdigit():
+        pk = my_picks(eid_, gsel)
+        if pk:
+            sec(f'Your GW{gsel} team', 'what the model expected from each of your players, and what they scored')
+            rows_, pt, at_ = '', 0.0, 0.0
+            for p_ in sorted(pk['picks'], key=lambda x: x['position']):
+                i = p_['element']; r_ = D[D.element == i]
+                pr = float(r_.pred.iloc[0]) if len(r_) else 0.0; ac = float(r_.actual.iloc[0]) if len(r_) else 0.0
+                mult = p_['multiplier']; starter = p_['position'] <= 11
+                if mult: pt += pr * mult; at_ += ac * mult
+                role = 'Captain' if p_['is_captain'] else ('Vice' if p_['is_vice_captain'] else ('Bench' if not starter else ''))
+                d_ = ac - pr
+                d_ = 0.0 if abs(d_) < 0.05 else d_
+                rows_ += (f'<tr style="{"opacity:.6" if not mult else ""}"><td><div class="who"><img src="{ui.shirt(P.team_code.get(i, 1), P.pos.get(i) == 1)}"><div><b>{ui.esc(P.name.get(i, "?"))}</b>'
+                          f'<div class="t">{P.team.get(i, "")} · {role or "Starter"}{" ×" + str(mult) if mult > 1 else ""}</div></div></div></td>'
+                          f'<td>{pr:.1f}</td><td><b>{ac:.0f}</b></td><td><b style="color:{ui.GREEN if d_ > 0.5 else (ui.PINK if d_ < -0.5 else "#fff")}">{d_:+.1f}</b></td></tr>')
+            eh = pk.get('entry_history', {})
+            html(ui.cards([(f'{eh.get("points", at_):.0f}', f'your GW{gsel} score' + (f' (incl. −{eh["event_transfers_cost"]} hits)' if eh.get('event_transfers_cost') else ''), 'g'),
+                           (f'{pt:.1f}', 'what the model expected from your XI (captain doubled)', 'c'),
+                           (f'{eh.get("rank", 0):,}' if eh.get('rank') else '-', 'your gameweek rank', '')]))
+            html(f'<table class="fpl"><tr><th>Player</th><th>Predicted</th><th>Scored</th><th>Difference</th></tr>{rows_}</table>')
+            cap_id = next((p_['element'] for p_ in pk['picks'] if p_['is_captain']), None)
+            squad_ = [p_['element'] for p_ in pk['picks']]
+            best_cap = D[D.element.isin(squad_)].nlargest(1, 'pred')
+            if cap_id is not None and len(best_cap):
+                bc = best_cap.iloc[0]; ca = D[D.element == cap_id]
+                html(f'<div class="note" style="margin-top:6px">You captained <b style="color:#fff">{ui.esc(P.name.get(cap_id, "?"))}</b> '
+                     f'({(ca.actual.iloc[0] if len(ca) else 0):.0f} pts). The model\'s pick from your squad was <b style="color:#fff">{ui.esc(bc["name"])}</b> '
+                     f'(predicted {bc.pred:.1f}, scored {bc.actual:.0f}).</div>')
+
+    # ---- surprises
+    sec('Hits and misses', f'GW{gsel}')
+    card_ = lambda r_, kind: (f'<div class="mv {kind}" style="margin:5px 0"><img src="{ui.shirt(r_.team_code, r_.pos == 1)}"><div><div class="bigname">{ui.esc(r_["name"])} '
+                              f'<span class="note">{r_.team}</span></div><div class="m">predicted {r_.pred:.1f} · scored <b style="color:#fff">{r_.actual:.0f}</b> · '
+                              f'{r_.goals:.0f} G · {r_.assists:.0f} A · {r_.bonus:.0f} bonus</div></div></div>')
+    k1, k2, k3 = st.columns(3)
+    with k1:
+        html('<div class="ptitle">Called it <small>top 20 predictions that hauled</small></div>')
+        x_ = D.nlargest(20, 'pred'); x_ = x_[x_.actual >= 8].nlargest(5, 'actual')
+        html(''.join(card_(r_, 'in') for _, r_ in x_.iterrows()) or '<div class="note">None of the top 20 scored 8+ this week.</div>')
+    with k2:
+        html('<div class="ptitle">Missed <small>big scores the model did not expect</small></div>')
+        x_ = D[(D.actual >= 8) & (D.pred < 3.5)].nlargest(5, 'actual')
+        html(''.join(card_(r_, 'out') for _, r_ in x_.iterrows()) or '<div class="note">No big surprises.</div>')
+    with k3:
+        html('<div class="ptitle">Backed, but blanked <small>top 20 that scored 2 or less</small></div>')
+        x_ = D.nlargest(20, 'pred'); x_ = x_[x_.actual <= 2].nsmallest(5, 'actual')
+        html(''.join(card_(r_, 'out') for _, r_ in x_.iterrows()) or '<div class="note">Every top-20 pick returned.</div>')
+
+    # ---- every player
+    sec('Every player', 'predicted vs what happened')
+    f1, f2, f3, f4 = st.columns([1.4, 1.6, 1.2, 1.2])
+    pos_ = f1.pills('Position', ['GK', 'DEF', 'MID', 'FWD'], selection_mode='multi', default=['GK', 'DEF', 'MID', 'FWD'], key='rv_pos')
+    tms = f2.multiselect('Teams', sorted(D.team.dropna().unique()), placeholder='All teams', key='rv_tm')
+    sort_ = f3.selectbox('Sort by', ['Predicted', 'Scored', 'Beat prediction most', 'Fell short most'], key='rv_sort')
+    played = f4.toggle('Only players who played', True, key='rv_played')
+    T_ = D[D.pos.isin([k for k, v in POS.items() if v in (pos_ or POS.values())])]
+    if tms: T_ = T_[T_.team.isin(tms)]
+    if played: T_ = T_[T_.minutes > 0]
+    T_ = {'Predicted': T_.sort_values('pred', ascending=False), 'Scored': T_.sort_values('actual', ascending=False),
+          'Beat prediction most': T_.sort_values('diff', ascending=False), 'Fell short most': T_.sort_values('diff')}[sort_].head(40)
+    pct = lambda r_, c: f'{100 * r_[c]:.0f}%' if c in r_ and pd.notna(r_[c]) else '-'
+    body = ''.join(
+        f'<tr><td><div class="who"><img src="{ui.shirt(r_.team_code, r_.pos == 1)}"><div><b>{ui.esc(r_["name"])}</b><span class="pos" style="background:{ui.POS_COL[r_.pos]}">{POS[r_.pos]}</span>'
+        f'<div class="t">{r_.team}</div></div></div></td><td>{r_.pred:.1f}</td><td><b>{r_.actual:.0f}</b></td>'
+        f'<td><b style="color:{ui.GREEN if r_["diff"] > 0.5 else (ui.PINK if r_["diff"] < -0.5 else "#fff")}">{r_["diff"]:+.1f}</b></td><td>{r_.minutes:.0f}</td>'
+        f'<td>{pct(r_, "p_goal")} → <b>{r_.goals:.0f}</b></td><td>{pct(r_, "p_assist")} → <b>{r_.assists:.0f}</b></td><td>{pct(r_, "p_bonus")} → <b>{r_.bonus:.0f}</b></td></tr>'
+        for _, r_ in T_.iterrows())
+    html('<table class="fpl"><tr><th>Player</th><th>Predicted</th><th>Scored</th><th>Difference</th><th>Minutes</th><th>Goal chance → goals</th>'
+         f'<th>Assist chance → assists</th><th>Bonus chance → bonus</th></tr>{body}</table>')
+
+    # ---- every week so far
+    sec('Week by week', 'how the model has done each gameweek')
+    wk = []
+    for g_ in sorted(RV):
+        s_, d_ = RV[g_]; l_ = d_[d_.pred >= 2.0]
+        wk.append(dict(gw=g_, acc=l_[['pred', 'actual']].corr(method='spearman').iloc[0, 1] if len(l_) > 5 else np.nan,
+                       top=d_.nlargest(10, 'pred').actual.mean(),
+                       form=d_[d_.pred >= 2.0].nlargest(10, 'form').actual.mean() if 'form' in d_ and d_.form.notna().any() else np.nan))
+    wk = pd.DataFrame(wk)
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=[f'GW{g_}' for g_ in wk.gw], y=wk.top, name="model's top 10 (avg pts)", marker_color=ui.GREEN))
+    if wk.form.notna().any(): fig.add_trace(go.Bar(x=[f'GW{g_}' for g_ in wk.gw], y=wk.form, name='top 10 by form (avg pts)', marker_color='#7a3f86'))
+    fig = ui.plot_style(fig, 300); fig.update_layout(barmode='group'); fig.update_yaxes(title='avg points scored')
+    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+    html(f'<div class="note">Across these weeks the model\'s top 10 averaged <b style="color:#00ff87">{wk.top.mean():.1f}</b> points'
+         + (f', against <b>{wk.form.mean():.1f}</b> for the top 10 by form' if wk.form.notna().any() else '') + f'. Average ranking accuracy: <b>{wk.acc.mean():.2f}</b>. '
+         'Single weeks swing a lot: judge the model over several weeks, not one.</div>')
 
 # ================================================================== HOW IT WORKS
 else:

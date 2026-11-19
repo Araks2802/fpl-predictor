@@ -50,10 +50,12 @@ if __name__ == '__main__':
     train = hist[(hist.si < 3) | ((hist.season == '2025-26') & (hist.gw <= 28))]
     test = hist[(hist.season == '2026-27') & (hist.gw >= 3)]
     rows = []
+    test_probs = test[['season', 'gw', 'element', 'fixture']].copy()      # back-test chances, for the app's Review tab
     for ev, fn in EVENTS.items():
         keep = ROWS.get(ev, lambda d: d.minutes.notna())
         tr_, te_ = train[keep(train)], test[keep(test)]
         m = fit(tr_, fn(tr_)); p = m.predict_proba(te_[F].fillna(-1))[:, 1]; y = fn(te_).astype(int).values
+        test_probs[f'p_{ev}'] = m.predict_proba(test[F].fillna(-1))[:, 1] if ev != 'dc' else np.where(test.pos == 1, 0.0, m.predict_proba(test[F].fillna(-1))[:, 1])
         base = np.full(len(y), fn(tr_).mean())                           # baseline: everyone gets the average rate
         brier, brier0 = np.mean((p - y) ** 2), np.mean((base - y) ** 2)
         st = te_.minutes_r3.values >= 60
@@ -78,6 +80,7 @@ if __name__ == '__main__':
     pany = fit(train, train.bonus >= 1).predict_proba(test[F].fillna(-1))[:, 1]
     pb = pany * cond(train).predict(test[F].fillna(-1)).clip(1, 3); st = (test.minutes_r3 >= 60).values
     print(f"expected bonus: predicted {pb.mean():.3f} vs actual {test.bonus.mean():.3f} | starters {pb[st].mean():.3f} vs {test.bonus.values[st].mean():.3f} | top 100: {np.sort(pb)[-100:].mean():.2f} vs {test.bonus.values[np.argsort(pb)[-100:]].mean():.2f}")
+    test_probs.to_csv(OUT / 'event_test_predictions.csv', index=False)
     final = {ev: fit(hist[ROWS.get(ev, lambda d: d.minutes.notna())(hist)], fn(hist[ROWS.get(ev, lambda d: d.minutes.notna())(hist)])) for ev, fn in EVENTS.items()}
     final['bonus_size'] = cond(hist)
     final['team_cs'] = HistGradientBoostingClassifier(max_iter=200, learning_rate=0.05, max_leaf_nodes=12, l2_regularization=1.0, random_state=0).fit(Tp[TEAM_F], Tp.cs.astype(int))

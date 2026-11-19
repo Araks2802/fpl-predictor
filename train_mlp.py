@@ -92,7 +92,10 @@ if __name__ == '__main__':
     for p, g in st_.groupby('pos'): print(f'   {fd_pos[p]}: predicted {g.blend.mean():.2f} vs actual {g.total_points.mean():.2f}')
     pd.concat([a.assign(group='all'), b.assign(group='starters')]).to_csv(OUT / 'test_scores.csv', index=False)
     tag = os.environ.get('FEATS', 'all'); a.assign(features=tag).to_csv(OUT / f'test_scores_{tag}.csv', index=False)
-    test[['season', 'gw', 'web_name', 'pos', 'total_points', 'minutes_r3', 'last5', 'gbm', 'mlp', 'blend']].to_csv(OUT / 'test_predictions.csv', index=False)
+    # saved with ids and match stats, for the app's Review tab (predicted vs what happened, for weeks the model never saw)
+    keep_ = ['season', 'gw', 'element', 'code', 'team_id', 'opponent_team', 'was_home', 'fixture', 'web_name', 'pos', 'total_points', 'minutes', 'goals_scored',
+             'assists', 'bonus', 'clean_sheets', 'minutes_r3', 'last5', 'gbm', 'mlp', 'blend']
+    test[[c for c in keep_ if c in test.columns]].to_csv(OUT / 'test_predictions.csv', index=False)
 
     if os.environ.get('FINAL') == '0': raise SystemExit
     print('\nFINAL MODEL: retrain on everything played so far')

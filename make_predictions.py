@@ -46,6 +46,14 @@ nx = fut[fut.gw == gws[0]].drop_duplicates('element').set_index('element')
 for c in ('dc_hit_r10', 'dc_p90_r10', 'bonus_rate_r10', 'own_form5', 'own_gd5', 'own_xgf', 'own_xga', 'opp_form5', 'opp_xgf', 'opp_xga', 'h2h_adj', 'h2h_n', 'venue_adj', 'p_team_cs'):
     P[c] = nx[c].reindex(P.index)
 P.to_parquet(ROOT / 'data' / 'predictions.parquet')
+# snapshot of what the app shows for the coming gameweek. Each run overwrites it, so the last run before the deadline is what stays:
+# the Review tab later compares exactly these predictions with what happened.
+g0 = gws[0]; snap_dir = ROOT / 'data' / 'snapshots'; snap_dir.mkdir(exist_ok=True)
+cols = ['name', 'team', 'team_id', 'team_code', 'pos', 'price', 'selected', 'chance', f'opp_{g0}', f'xp_{g0}'] + \
+       [c for c in P.columns if c.endswith(f'_{g0}') and c.startswith(('p_', 'xb_'))]
+snap = P[cols].copy(); snap.columns = [c[:-len(f'_{g0}')] if c.endswith(f'_{g0}') else c for c in snap.columns]
+snap['gw'] = g0; snap['made_at'] = pd.Timestamp.now(tz='UTC').isoformat(timespec='minutes')
+snap.to_parquet(snap_dir / f'gw{g0}.parquet')
 nxt = next(e for e in boot['events'] if e['is_next'])
 json.dump({'gws': gws, 'next_gw': nxt['id'], 'deadline': nxt['deadline_time']}, open(ROOT / 'data' / 'meta.json', 'w'))
 print('gameweeks', gws)

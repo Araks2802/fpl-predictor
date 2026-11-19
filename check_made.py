@@ -6,7 +6,7 @@ for made in ([(569, 79)], [(569, 79), (8, 112)]):
     for page in ('Planner', 'My team', 'Transfers', 'League'):
         at = AppTest.from_file('app.py', default_timeout=240); at.session_state['nav'] = page; at.session_state['eid'] = '1'
         at.session_state['made'] = made; at.session_state['_made_for'] = '1'
-        if page == 'League': at.session_state['lid'] = '5508'
+        if page == 'League': at.session_state['_lid'] = '5508'
         at.run()
         txt = ' '.join(m.value for m in at.markdown)
         if page == 'Planner':
