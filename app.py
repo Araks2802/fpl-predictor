@@ -1206,6 +1206,23 @@ elif page == 'Review':
     RV = review_data()
     if not RV:
         html('<div class="note">No finished gameweeks with predictions yet.</div>'); done()
+
+    # ---- season so far, one line per week (used by the summary here and the chart at the bottom)
+    wk = []
+    for g_ in sorted(RV):
+        s_, d_ = RV[g_]; l_ = d_[d_.pred >= 2.0]
+        wk.append(dict(gw=g_, acc=l_[['pred', 'actual']].corr(method='spearman').iloc[0, 1] if len(l_) > 5 else np.nan,
+                       top=d_.nlargest(10, 'pred').actual.mean(),
+                       form=d_[d_.pred >= 2.0].nlargest(10, 'form').actual.mean() if 'form' in d_ and d_.form.notna().any() else np.nan))
+    wk = pd.DataFrame(wk)
+    won = wk.dropna(subset=['form']); won_n = int((won.top > won.form).sum())
+    sec('Season so far', f'GW{wk.gw.min()} to GW{wk.gw.max()}')
+    html(ui.cards([(f'{wk.top.mean():.1f}', "avg points of the model's top 10 each week", 'g'),
+                   (f'{wk.form.mean():.1f}' if len(won) else '-', 'avg points of the top 10 by recent form', 'c'),
+                   (f'{won_n} of {len(won)}' if len(won) else '-', 'weeks the model beat picking by form', ''),
+                   (f'{wk.acc.mean():.2f}', 'avg ranking accuracy (1 = perfect order)', '')]))
+
+    sec('Pick a gameweek', 'see what the model said and what happened')
     gl = sorted(RV, reverse=True)
     gsel = st.selectbox('Gameweek', gl, format_func=lambda g_: f'Gameweek {g_} · ' + ('what the app showed before the deadline' if RV[g_][0] == 'snapshot' else 'back-test'), key='rv_gw')
     src, D = RV[gsel]
@@ -1227,6 +1244,36 @@ elif page == 'Review':
                    (f'{ui.esc(cap["name"])}: {cap.actual:.0f}', f'model\'s top pick scored (predicted {cap.pred:.1f})', ''),
                    (f'{rmse:.1f}', 'typical miss in points, likely starters', '')]))
 
+    # ---- team of the week: the model's best XI vs the best XI that actually happened (any price, legal formation)
+    def dream_xi(col):
+        """Best legal XI by col: the minimum per position first (1 GK, 3 DEF, 2 MID, 1 FWD), then the best of the rest up to the maximums."""
+        s_ = D.dropna(subset=['pos']).sort_values(col, ascending=False)
+        lo, hi = {1: 1, 2: 3, 3: 2, 4: 1}, {1: 1, 2: 5, 3: 5, 4: 3}
+        xi = [i for p_ in (1, 2, 3, 4) for i in s_[s_.pos == p_].element.head(lo[p_])]
+        cnt = {p_: lo[p_] for p_ in lo}
+        for i, p_ in zip(s_.element, s_.pos):
+            if len(xi) == 11: break
+            if i not in xi and cnt[p_] < hi[p_]: xi.append(i); cnt[p_] += 1
+        return [int(i) for i in xi]
+    am = D.set_index('element'); P_past = P.assign(chance=100)    # no injury flags on past weeks
+    mx, bx = dream_xi('pred'), dream_xi('actual')
+    mcap = max(mx, key=lambda i: am.pred[i]); bcap = max(bx, key=lambda i: am.actual[i])
+    m_pts = am.actual[mx].sum() + am.actual[mcap]; b_pts = am.actual[bx].sum() + am.actual[bcap]
+    sec('Team of the week', f'GW{gsel} · any price, captain doubled')
+    tw1, tw2 = st.columns(2)
+    with tw1:
+        html(ui.pitch(P_past, mx, [], mcap, None, {i: am.pred[i] for i in mx}, {i: f'scored {am.actual[i]:.0f}' for i in mx}, compact=True,
+                      title=f"The model's team <small>predicted {am.pred[mx].sum() + am.pred[mcap]:.0f} · scored <b style='color:#00ff87'>{m_pts:.0f}</b></small>"))
+    with tw2:
+        html(ui.pitch(P_past, bx, [], bcap, None, {i: am.actual[i] for i in bx}, {i: f'predicted {am.pred[i]:.1f}' for i in bx}, compact=True,
+                      mark_in=[i for i in bx if i in mx],
+                      title=f"The best team in hindsight <small>scored <b style='color:#00ff87'>{b_pts:.0f}</b></small>"))
+    html(f'<div class="note" style="margin-top:4px">The model\'s team got <b style="color:#fff">{m_pts:.0f}</b> of the <b style="color:#fff">{b_pts:.0f}</b> points the perfect team scored '
+         f'({100 * m_pts / max(b_pts, 1):.0f}%). '
+         + (f'<b style="color:#fff">{len(set(mx) & set(bx))}</b> of its 11 players made the perfect team (highlighted on the right). ' if set(mx) & set(bx)
+            else 'None of its players made the perfect team: big hauls are hard to see coming. ') +
+         'Points under each shirt are predicted on the left and actual on the right.</div>')
+
     # ---- your team that week
     eid_ = str(st.session_state.get('eid', '') or '').strip()
     if team is not None and eid_.isdigit():
@@ -1246,7 +1293,7 @@ elif page == 'Review':
                           f'<div class="t">{P.team.get(i, "")} · {role or "Starter"}{" ×" + str(mult) if mult > 1 else ""}</div></div></div></td>'
                           f'<td>{pr:.1f}</td><td><b>{ac:.0f}</b></td><td><b style="color:{ui.GREEN if d_ > 0.5 else (ui.PINK if d_ < -0.5 else "#fff")}">{d_:+.1f}</b></td></tr>')
             eh = pk.get('entry_history', {})
-            html(ui.cards([(f'{eh.get("points", at_):.0f}', f'your GW{gsel} score' + (f' (incl. −{eh["event_transfers_cost"]} hits)' if eh.get('event_transfers_cost') else ''), 'g'),
+            html(ui.cards([(f'{eh.get("points", at_):.0f}', f'your GW{gsel} score' + (f' (before −{eh["event_transfers_cost"]} hits)' if eh.get('event_transfers_cost') else ''), 'g'),
                            (f'{pt:.1f}', 'what the model expected from your XI (captain doubled)', 'c'),
                            (f'{eh.get("rank", 0):,}' if eh.get('rank') else '-', 'your gameweek rank', '')]))
             html(f'<table class="fpl"><tr><th>Player</th><th>Predicted</th><th>Scored</th><th>Difference</th></tr>{rows_}</table>')
@@ -1302,13 +1349,6 @@ elif page == 'Review':
 
     # ---- every week so far
     sec('Week by week', 'how the model has done each gameweek')
-    wk = []
-    for g_ in sorted(RV):
-        s_, d_ = RV[g_]; l_ = d_[d_.pred >= 2.0]
-        wk.append(dict(gw=g_, acc=l_[['pred', 'actual']].corr(method='spearman').iloc[0, 1] if len(l_) > 5 else np.nan,
-                       top=d_.nlargest(10, 'pred').actual.mean(),
-                       form=d_[d_.pred >= 2.0].nlargest(10, 'form').actual.mean() if 'form' in d_ and d_.form.notna().any() else np.nan))
-    wk = pd.DataFrame(wk)
     fig = go.Figure()
     fig.add_trace(go.Bar(x=[f'GW{g_}' for g_ in wk.gw], y=wk.top, name="model's top 10 (avg pts)", marker_color=ui.GREEN))
     if wk.form.notna().any(): fig.add_trace(go.Bar(x=[f'GW{g_}' for g_ in wk.gw], y=wk.form, name='top 10 by form (avg pts)', marker_color='#7a3f86'))
@@ -1317,6 +1357,28 @@ elif page == 'Review':
     html(f'<div class="note">Across these weeks the model\'s top 10 averaged <b style="color:#00ff87">{wk.top.mean():.1f}</b> points'
          + (f', against <b>{wk.form.mean():.1f}</b> for the top 10 by form' if wk.form.notna().any() else '') + f'. Average ranking accuracy: <b>{wk.acc.mean():.2f}</b>. '
          'Single weeks swing a lot: judge the model over several weeks, not one.</div>')
+
+    # ---- your season: what you scored each week vs what the model expected from the team you picked
+    if team is not None and eid_.isdigit():
+        ys = []
+        for g_ in sorted(RV):
+            pk_ = my_picks(eid_, g_)
+            if not pk_: continue
+            dm = RV[g_][1].set_index('element')
+            exp_ = sum(float(dm.pred.get(p_['element'], 0)) * p_['multiplier'] for p_ in pk_['picks'])
+            ys.append(dict(gw=g_, exp=exp_, pts=pk_.get('entry_history', {}).get('points', np.nan)))
+        if ys:
+            ys = pd.DataFrame(ys)
+            sec('Your season', 'what you scored vs what the model expected from the team you picked')
+            fy = go.Figure()
+            fy.add_trace(go.Bar(x=[f'GW{g_}' for g_ in ys.gw], y=ys.pts, name='you scored', marker_color=ui.GREEN))
+            fy.add_trace(go.Scatter(x=[f'GW{g_}' for g_ in ys.gw], y=ys.exp, name='model expected', mode='lines+markers', line=dict(color='#04f5ff', width=3)))
+            fy = ui.plot_style(fy, 300); fy.update_yaxes(title='points')
+            st.plotly_chart(fy, use_container_width=True, config={'displayModeBar': False})
+            dlt = (ys.pts - ys.exp).sum()
+            html(f'<div class="note">Over these weeks you scored <b style="color:#fff">{ys.pts.sum():.0f}</b> points against <b style="color:#fff">{ys.exp.sum():.0f}</b> expected, '
+                 f'{"a lucky run" if dlt > 15 else ("an unlucky run" if dlt < -15 else "roughly what your picks deserved")} '
+                 f'({dlt:+.0f}). Your score is before hits; the expected line uses your captain and bench as you set them.</div>')
 
 # ================================================================== HOW IT WORKS
 else:

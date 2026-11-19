@@ -199,8 +199,8 @@ def pitch(P, xi, bench, cap, vice, value, fix, gw=None, compact=False, mark_in=(
         rows += '<div class="prow">' + ''.join(_player(P, i, value[i], fix[i], cap, vice, mk(i)) for i in ids) + '</div>'
     b = ''.join(_player(P, i, value[i], fix[i], mark=mk(i)) for i in bench)
     head = f'<div class="ptitle">{title}</div>' if title else ''
-    return (f'<div class="{"compact" if compact else ""}">{head}<div class="pitch">{rows}</div><div class="bench"><div class="lab">BENCH</div>'
-            f'<div class="prow" style="margin:4px 0 6px 0">{b}</div></div></div>')
+    bench_html = (f'<div class="bench"><div class="lab">BENCH</div><div class="prow" style="margin:4px 0 6px 0">{b}</div></div>') if bench else ''
+    return f'<div class="{"compact" if compact else ""}">{head}<div class="pitch">{rows}</div>{bench_html}</div>'
 
 
 def chances(r, g):
