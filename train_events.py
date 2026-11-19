@@ -50,12 +50,13 @@ if __name__ == '__main__':
     train = hist[(hist.si < 3) | ((hist.season == '2025-26') & (hist.gw <= 28))]
     test = hist[(hist.season == '2026-27') & (hist.gw >= 3)]
     rows = []
-    test_probs = test[['season', 'gw', 'element', 'fixture']].copy()      # back-test chances, for the app's Review tab
+    rv = hist[hist.season == '2026-27']                                   # back-test chances for every played week of the season (Review tab)
+    test_probs = rv[['season', 'gw', 'element', 'fixture']].copy()
     for ev, fn in EVENTS.items():
         keep = ROWS.get(ev, lambda d: d.minutes.notna())
         tr_, te_ = train[keep(train)], test[keep(test)]
         m = fit(tr_, fn(tr_)); p = m.predict_proba(te_[F].fillna(-1))[:, 1]; y = fn(te_).astype(int).values
-        test_probs[f'p_{ev}'] = m.predict_proba(test[F].fillna(-1))[:, 1] if ev != 'dc' else np.where(test.pos == 1, 0.0, m.predict_proba(test[F].fillna(-1))[:, 1])
+        test_probs[f'p_{ev}'] = m.predict_proba(rv[F].fillna(-1))[:, 1] if ev != 'dc' else np.where(rv.pos == 1, 0.0, m.predict_proba(rv[F].fillna(-1))[:, 1])
         base = np.full(len(y), fn(tr_).mean())                           # baseline: everyone gets the average rate
         brier, brier0 = np.mean((p - y) ** 2), np.mean((base - y) ** 2)
         st = te_.minutes_r3.values >= 60

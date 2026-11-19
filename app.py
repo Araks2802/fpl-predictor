@@ -1412,10 +1412,11 @@ elif page == 'Review':
             pk_ = my_picks(eid_, g_)
             if not pk_ or len([p_ for p_ in pk_['picks'] if p_['element'] in P.index]) < 15: continue
             y_, m_ = week_teams(pk_, RV[g_][1].set_index('element'))
-            ys.append(dict(gw=g_, exp=y_['pred'], pts=y_['pts'], model=m_['pts']))
+            hit_ = pk_.get('entry_history', {}).get('event_transfers_cost', 0) or 0    # the same squad, so the model's pick pays the same hits
+            ys.append(dict(gw=g_, exp=y_['pred'] - hit_, pts=y_['pts'] - hit_, model=m_['pts'] - hit_, hit=hit_))
         if ys:
             ys = pd.DataFrame(ys); gap = ys.model.sum() - ys.pts.sum()
-            sec('Your season', f'GW{ys.gw.min()} to GW{ys.gw.max()} · points before hits')
+            sec('Your season', f'GW{ys.gw.min()} to GW{ys.gw.max()} · after hits' + (f' (−{ys.hit.sum():.0f} in total)' if ys.hit.sum() else ''))
             html(ui.cards([(f'{ys.pts.sum():.0f}', 'you scored with the teams you picked', 'g'),
                            (f'{ys.model.sum():.0f}', "the model's pick from your squad each week would have scored", 'c'),
                            (f'{gap:+.0f}', 'the model\'s picks vs yours' + (f' · better in {(ys.model > ys.pts).sum()} of {len(ys)} weeks' if len(ys) else ''), '')]))

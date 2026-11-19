@@ -92,10 +92,13 @@ if __name__ == '__main__':
     for p, g in st_.groupby('pos'): print(f'   {fd_pos[p]}: predicted {g.blend.mean():.2f} vs actual {g.total_points.mean():.2f}')
     pd.concat([a.assign(group='all'), b.assign(group='starters')]).to_csv(OUT / 'test_scores.csv', index=False)
     tag = os.environ.get('FEATS', 'all'); a.assign(features=tag).to_csv(OUT / f'test_scores_{tag}.csv', index=False)
-    # saved with ids and match stats, for the app's Review tab (predicted vs what happened, for weeks the model never saw)
+    # saved with ids and match stats, for the app's Review tab (predicted vs what happened, for weeks the model never saw).
+    # The scores above start at GW3, but the same model never saw GW1-2 either, so the Review tab gets every played week of the season.
+    rv = h[~h.future & h.total_points.notna() & h.pos.isin([1, 2, 3, 4]) & (h.season == '2026-27')].copy()
+    rv['last5'] = rv.total_points_r5.fillna(0); rv['gbm'] = gb.predict(rv[F].fillna(-1)); rv['mlp'] = predict(nets, sc, rv); rv['blend'] = (rv.gbm + rv.mlp) / 2
     keep_ = ['season', 'gw', 'element', 'code', 'team_id', 'opponent_team', 'was_home', 'fixture', 'web_name', 'pos', 'total_points', 'minutes', 'goals_scored',
              'assists', 'bonus', 'clean_sheets', 'minutes_r3', 'last5', 'gbm', 'mlp', 'blend']
-    test[[c for c in keep_ if c in test.columns]].to_csv(OUT / 'test_predictions.csv', index=False)
+    rv[[c for c in keep_ if c in rv.columns]].to_csv(OUT / 'test_predictions.csv', index=False)
 
     if os.environ.get('FINAL') == '0': raise SystemExit
     print('\nFINAL MODEL: retrain on everything played so far')
