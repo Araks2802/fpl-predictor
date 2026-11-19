@@ -60,6 +60,48 @@ footer {visibility: hidden;}
 .flag {position: absolute; top: -2px; left: 14px; width: 20px; height: 20px; border-radius: 50%; background: #ffab1b; color: #1b0021;
   font-weight: 800; font-size: .75rem; line-height: 20px;}
 .flag.r {background: #e90052; color: #fff;}
+.compact .pl {width: 18.5%; max-width: 82px; min-width: 0;} .compact .pl img {width: 70%; max-width: 46px; height: auto;} .compact .pname, .compact .pxp {font-size: .68rem;}
+.compact .badge, .compact .flag {right: 2px; width: 18px; height: 18px; line-height: 18px; font-size: .65rem;} .compact .flag {left: 2px;}
+.compact .pfix {font-size: .6rem;} .compact .prow {gap: 1.2%; margin: 6px 0 10px 0;} .compact .pitch {padding: 12px 4px 6px 4px;}
+.compact .pitch:after {width: 110px; height: 44px;}
+.pl.in .pname {background: #00ff87;} .pl.in img {filter: drop-shadow(0 0 8px rgba(0,255,135,.9));}
+.pl.out .pname {background: #e90052; color: #ffffff;} .pl.out img {opacity: .55;}
+.ptitle {font-family: 'Outfit'; font-weight: 700; font-size: 1.02rem; margin: 0 0 8px 2px;} .ptitle small {font-family: 'Inter'; font-weight: 400; color: #b9a7c2; font-size: .82rem; margin-left: 6px;}
+.delta {text-align: center; padding-top: 120px;} .delta .big {font-family: 'Outfit'; font-weight: 800; font-size: 2.1rem;} .delta .lab {color: #b9a7c2; font-size: .8rem;}
+.week {display: grid; grid-template-columns: 90px 1fr 120px; gap: 10px; align-items: center; background: rgba(255,255,255,.045);
+  border: 1px solid rgba(255,255,255,.08); border-radius: 12px; padding: 10px 14px; margin: 6px 0;}
+.week .gw {font-family: 'Outfit'; font-weight: 800; font-size: 1.15rem; color: #00ff87;} .week .ft {color: #b9a7c2; font-size: .78rem;}
+.week .mv {background: none; border: none; padding: 0; gap: 8px; display: inline-flex; margin-right: 14px;} .week .mv img {width: 30px; height: 30px;}
+.week .pts {text-align: right; font-family: 'Outfit'; font-weight: 800; font-size: 1.1rem;}
+/* the Planner pitches, built from Streamlit columns so they resize with the page and the right one can be clicked */
+[class*="st-key-plpitch"] {background: repeating-linear-gradient(180deg, #0f8a4a 0px, #0f8a4a 46px, #0c7d42 46px, #0c7d42 92px); position: relative;
+  border: 1px solid rgba(255,255,255,.12); border-radius: 18px 18px 0 0; padding: 18px 8px 16px 8px; gap: .9rem;}
+[class*="st-key-plpitch"]::before {content: ''; position: absolute; inset: 10px; border: 2px solid rgba(255,255,255,.35); border-radius: 6px; pointer-events: none;}
+[class*="st-key-plpitch"]::after {content: ''; position: absolute; left: 50%; top: 10px; width: 110px; height: 44px; transform: translateX(-50%);
+  border: 2px solid rgba(255,255,255,.35); border-top: none; pointer-events: none;}
+[class*="st-key-plbench"] {background: rgba(0,0,0,.25); border: 1px solid rgba(255,255,255,.08); border-top: none; border-radius: 0 0 18px 18px; padding: 8px 8px 12px 8px; gap: .3rem;}
+[class*="st-key-plpitch"] [data-testid="stHorizontalBlock"], [class*="st-key-plbench"] [data-testid="stHorizontalBlock"] {gap: 1.2%; justify-content: center; flex-wrap: nowrap; position: relative; z-index: 1;}
+[class*="st-key-plpitch"] [data-testid="stColumn"], [class*="st-key-plbench"] [data-testid="stColumn"] {min-width: 0 !important; width: 18.5% !important; flex: 0 1 18.5% !important; max-width: 84px; text-align: center;}
+[class*="st-key-plpitch"] [data-testid="stColumn"] [data-testid="stVerticalBlock"], [class*="st-key-plbench"] [data-testid="stColumn"] [data-testid="stVerticalBlock"] {gap: 0 !important;}
+[class*="st-key-plpitch"] [data-testid="stElementContainer"], [class*="st-key-plbench"] [data-testid="stElementContainer"] {margin: 0 !important;}
+.blab {text-align: center; color: #b9a7c2; font-size: .72rem; letter-spacing: 1px;}
+.pshirt {text-align: center; position: relative; padding-top: 2px;} .pshirt img {display: block; margin: 0 auto 2px auto; width: 60%; max-width: 46px; height: auto; filter: drop-shadow(0 4px 6px rgba(0,0,0,.35));}
+.pnm, .ppt, .pfx {position: relative; z-index: 2;}
+[class*="st-key-plpitch"] [data-testid="stMarkdownContainer"], [class*="st-key-plbench"] [data-testid="stMarkdownContainer"] {margin-bottom: 0 !important;}
+.pshirt.faded img {opacity: .55;}
+.pshirt .badge {right: 2px; top: -2px; width: 18px; height: 18px; line-height: 18px; font-size: .65rem;} .pshirt .flag {left: 2px; top: -2px; width: 17px; height: 17px; line-height: 17px; font-size: .65rem;}
+.pnm {background: #ffffff; color: #37003c; font-family: 'Outfit'; font-weight: 700; font-size: .68rem; border-radius: 6px 6px 0 0; padding: 2px 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.35;}
+.pnm.in {background: #00ff87;} .pnm.out {background: #e90052; color: #ffffff;} .pnm.mv {background: #04f5ff;} .pnm.diff {background: #ff5fa2; color: #1b0021;}
+.ppt {background: #37003c; color: #00ff87; font-family: 'Outfit'; font-weight: 700; font-size: .68rem; border-radius: 0 0 6px 6px; padding: 2px 3px; line-height: 1.35;}
+.pfx {font-size: .6rem; color: #fff; background: rgba(0,0,0,.35); border-radius: 4px; padding: 1px 2px; text-align: center; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.4;}
+[class*="st-key-pp"] button {background: #ffffff; color: #37003c; border: none; border-radius: 6px 6px 0 0; min-height: 0; padding: 2px 3px; width: 100%; line-height: 1.35;
+  box-shadow: none; outline: 2px dashed rgba(4,245,255,.0); transition: all .12s;}
+[class*="st-key-pp"] button p {font-family: 'Outfit'; font-weight: 700; font-size: .68rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: 0;}
+[class*="st-key-ppin_"] button {background: #00ff87;} [class*="st-key-ppmv_"] button {background: #04f5ff;}
+[class*="st-key-pp"] button:hover {background: #ebff00; color: #1b0021; outline: 2px solid #ebff00;}
+[class*="st-key-pp"] button:focus:not(:hover), [class*="st-key-pp"] button:active:not(:hover) {color: #37003c; box-shadow: none;}
+.hint {display: inline-flex; align-items: center; gap: 8px; background: rgba(235,255,0,.12); border: 1px solid rgba(235,255,0,.4); color: #ebff00; border-radius: 999px;
+  padding: 4px 12px; font-size: .82rem; font-weight: 600; margin: 2px 0 8px 0;}
 .bench {background: rgba(0,0,0,.25); border-radius: 0 0 18px 18px; margin: -6px 0 0 0; padding: 12px 8px 6px 8px; border: 1px solid rgba(255,255,255,.08); border-top: none;}
 .bench .lab {text-align: center; color: #b9a7c2; font-size: .75rem; letter-spacing: 1px; margin-bottom: 4px;}
 table.fpl, table.tick {width: 100%; border-collapse: separate !important; border: none !important; margin: 0;}
@@ -128,7 +170,7 @@ def fx_chip(opp, fdr):
     return f'<span class="fx" style="background:{bg};color:{fg}">{esc(opp) if opp != "-" else "BLANK"}</span>'
 
 
-def _player(P, i, val, fix, cap=None, vice=None):
+def _player(P, i, val, fix, cap=None, vice=None, mark=''):
     r = P.loc[i]
     b = '<div class="badge">C</div>' if i == cap else ('<div class="badge v">V</div>' if i == vice else '')
     ch = r.chance
@@ -139,22 +181,26 @@ def _player(P, i, val, fix, cap=None, vice=None):
         tip = (f'Goal {100 * r[f"p_goal_{g}"]:.0f}% · Assist {100 * r[f"p_assist_{g}"]:.0f}% · ' if r.pos != 1 else '') + \
               (f'Clean sheet {100 * r[f"p_cs_{g}"]:.0f}% · ' if r.pos != 4 else '') + \
               (f'Def. contribution {100 * r[f"p_dc_{g}"]:.0f}% · ' if r.pos != 1 else '') + f'Bonus {100 * r[f"p_bonus_{g}"]:.0f}% · 60+ mins {100 * r[f"p_60_{g}"]:.0f}%'
-    return (f'<div class="pl" title="{esc(tip)}">{b}{f}<img src="{shirt(r.team_code, r.pos == 1)}"><div class="pname">{esc(r["name"])}</div>'
+    return (f'<div class="pl {mark}" title="{esc(tip)}">{b}{f}<img src="{shirt(r.team_code, r.pos == 1)}"><div class="pname">{esc(r["name"])}</div>'
             f'<div class="pxp">{val:.1f} pts</div><div class="pfix">{esc(fix)}</div></div>')
 
 
 fix_gw = {}
 
 
-def pitch(P, xi, bench, cap, vice, value, fix, gw=None):
-    """value, fix: dicts id -> number / text shown under each shirt. Hovering a shirt shows his chances for gameweek gw."""
+def pitch(P, xi, bench, cap, vice, value, fix, gw=None, compact=False, mark_in=(), mark_out=(), title=''):
+    """value, fix: dicts id -> number / text shown under each shirt. Hovering a shirt shows his chances for gameweek gw.
+    compact: smaller shirts so two pitches fit side by side. mark_in / mark_out: players highlighted as coming in / going out."""
     fix_gw['gw'] = gw
+    mk = lambda i: 'in' if i in mark_in else ('out' if i in mark_out else '')
     rows = ''
     for p in (1, 2, 3, 4):
         ids = [i for i in xi if P.pos[i] == p]
-        rows += '<div class="prow">' + ''.join(_player(P, i, value[i], fix[i], cap, vice) for i in ids) + '</div>'
-    b = ''.join(_player(P, i, value[i], fix[i]) for i in bench)
-    return f'<div class="pitch">{rows}</div><div class="bench"><div class="lab">BENCH</div><div class="prow" style="margin:4px 0 6px 0">{b}</div></div>'
+        rows += '<div class="prow">' + ''.join(_player(P, i, value[i], fix[i], cap, vice, mk(i)) for i in ids) + '</div>'
+    b = ''.join(_player(P, i, value[i], fix[i], mark=mk(i)) for i in bench)
+    head = f'<div class="ptitle">{title}</div>' if title else ''
+    return (f'<div class="{"compact" if compact else ""}">{head}<div class="pitch">{rows}</div><div class="bench"><div class="lab">BENCH</div>'
+            f'<div class="prow" style="margin:4px 0 6px 0">{b}</div></div></div>')
 
 
 def chances(r, g):
@@ -204,4 +250,49 @@ def plot_style(fig, h=320):
                       font=dict(family='Outfit, sans-serif', color='#ffffff', size=13), legend=dict(orientation='h', y=1.12, x=0),
                       xaxis=dict(gridcolor='rgba(255,255,255,.06)', zeroline=False), yaxis=dict(gridcolor='rgba(255,255,255,.08)', zeroline=False),
                       hoverlabel=dict(bgcolor='#37003c', font_family='Inter'))
+    return fig
+
+
+# ------------------------------------------------------------------ clickable pitch (Plotly), used by the Planner
+def pitch_figure(P, xi, bench, cap, vice, value, fix, mark_in=(), mark_out=(), height=640, title=''):
+    """The same pitch as pitch(), drawn as a Plotly chart so a click on a shirt can be sent back to the app.
+    Each player is an invisible marker (carrying his id) under his shirt image; clicking selects him."""
+    import plotly.graph_objects as go
+    fig = go.Figure()
+    W_, Hp = 10.0, 10.6
+    # pitch with stripes, then the bench area below it
+    for k in range(11):
+        fig.add_shape(type='rect', x0=0, x1=W_, y0=2.0 + k * 0.8, y1=2.8 + k * 0.8, line_width=0, fillcolor='#0f8a4a' if k % 2 == 0 else '#0c7d42', layer='below')
+    fig.add_shape(type='rect', x0=0.15, x1=W_ - 0.15, y0=2.15, y1=10.45, line=dict(color='rgba(255,255,255,.35)', width=2), layer='below')
+    fig.add_shape(type='rect', x0=3.4, x1=6.6, y0=9.35, y1=10.45, line=dict(color='rgba(255,255,255,.35)', width=2), layer='below')
+    fig.add_shape(type='rect', x0=0, x1=W_, y0=-0.6, y1=1.95, line_width=0, fillcolor='rgba(0,0,0,.28)', layer='below')
+    fig.add_annotation(x=W_ / 2, y=1.78, text='BENCH', showarrow=False, font=dict(size=10, color='#b9a7c2', family='Inter'))
+    rows = {1: 9.2, 2: 7.15, 3: 5.1, 4: 3.05}
+    pos_xy = {}
+    for p, y in rows.items():
+        ids = [i for i in xi if P.pos[i] == p]; n = len(ids)
+        for k, i in enumerate(ids): pos_xy[i] = (W_ * (k + 1) / (n + 1), y)
+    for k, i in enumerate(bench): pos_xy[i] = (W_ * (k + 1) / 5, 0.62)
+    xs, ys, cd, hov = [], [], [], []
+    for i, (x, y) in pos_xy.items():
+        r = P.loc[i]
+        fig.add_layout_image(source=shirt(r.team_code, r.pos == 1), x=x, y=y + 0.68, xref='x', yref='y', sizex=0.8, sizey=0.8,
+                             xanchor='center', yanchor='middle', layer='above', opacity=0.5 if i in mark_out else 1)
+        nm_bg = '#00ff87' if i in mark_in else ('#e90052' if i in mark_out else '#ffffff'); nm_fg = '#ffffff' if i in mark_out else '#37003c'
+        fig.add_annotation(x=x, y=y - 0.08, text=f'<b>{esc(r["name"])[:11]}</b>', showarrow=False, bgcolor=nm_bg, font=dict(size=10, color=nm_fg, family='Outfit'), borderpad=2)
+        fig.add_annotation(x=x, y=y - 0.5, text=f'<b>{value[i]:.1f} pts</b>', showarrow=False, bgcolor='#37003c', font=dict(size=10, color='#00ff87', family='Outfit'), borderpad=2)
+        fig.add_annotation(x=x, y=y - 0.88, text=esc(fix[i]), showarrow=False, font=dict(size=8.5, color='#ffffff', family='Inter'), bgcolor='rgba(0,0,0,.35)', borderpad=1)
+        if i in (cap, vice):
+            fig.add_annotation(x=x + 0.38, y=y + 1.0, text='<b>C</b>' if i == cap else '<b>V</b>', showarrow=False, bgcolor='#1b0021',
+                               bordercolor='#00ff87' if i == cap else '#04f5ff', borderwidth=2, font=dict(size=10, color='#00ff87' if i == cap else '#04f5ff'))
+        if pd.notna(r.chance) and r.chance < 100:
+            fig.add_annotation(x=x - 0.38, y=y + 1.0, text='<b>!</b>', showarrow=False, bgcolor='#e90052' if r.chance <= 25 else '#ffab1b', font=dict(size=10, color='#1b0021'))
+        xs.append(x); ys.append(y + 0.45); cd.append(int(i)); hov.append(f'{r["name"]}: click to replace')
+    fig.add_trace(go.Scatter(x=xs, y=ys, mode='markers', customdata=cd, hovertext=hov, hoverinfo='text',
+                             marker=dict(size=58, color='rgba(255,255,255,0.01)', line=dict(width=0)),
+                             selected=dict(marker=dict(color='rgba(0,255,135,0.25)')), unselected=dict(marker=dict(opacity=1))))
+    fig.update_layout(height=height, margin=dict(l=0, r=0, t=26 if title else 0, b=0), autosize=True, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                      xaxis=dict(range=[0, W_], visible=False, fixedrange=True), yaxis=dict(range=[-0.6, Hp], visible=False, fixedrange=True),
+                      showlegend=False, dragmode=False, clickmode='event+select', hoverlabel=dict(bgcolor='#37003c', font_family='Inter'),
+                      title=dict(text=title, x=0.01, font=dict(family='Outfit', size=16, color='#ffffff')) if title else None)
     return fig

@@ -78,27 +78,42 @@ def load_entry(eid, boot):
         start_val = h[h['round'] == start].groupby('element').value.first().to_dict()
     except Exception:
         start_val = {}
+    # transfers already made for the coming gameweek (if FPL shows them yet): apply them to the squad and to the free transfers
+    nxt_gw = cur + 1
+    pending = [t for t in transfers if t['event'] == nxt_gw]
+    ids = [p['element'] for p in picks['picks']]
+    for t in sorted(pending, key=lambda t: t['time']):
+        if t['element_out'] in ids: ids[ids.index(t['element_out'])] = t['element_in']
     rows = []
-    for p in picks['picks']:
-        pid = p['element']; now = el[pid]['now_cost']
+    for pid in ids:
+        now = el[pid]['now_cost']
         tin = [t for t in transfers if t['element_in'] == pid and t['event'] not in fh_weeks]
         buy = max(tin, key=lambda t: t['time'])['element_in_cost'] if tin else start_val.get(pid, now - el[pid]['cost_change_start'])
         rows.append(dict(id=pid, buy=buy, now=now, sell=sell_price(buy, now), pos=el[pid]['element_type']))
     squad = pd.DataFrame(rows)
-    return dict(name=entry['name'], manager=f"{entry['player_first_name']} {entry['player_last_name']}", squad=squad, bank=bank,
-                free_transfers=free_transfers(hist, start, cur), chips_left=chips_left(hist, cur + 1), chips_used=chips_used(hist),
+    ft = free_transfers(hist, start, cur)
+    if pending and chips_left(hist, nxt_gw) and not any(c['event'] == nxt_gw for c in hist['chips']):
+        ft = max(ft - len(pending), 0)
+    return dict(pending=[(t['element_out'], t['element_in']) for t in pending], name=entry['name'], manager=f"{entry['player_first_name']} {entry['player_last_name']}", squad=squad, bank=bank,
+                free_transfers=ft, chips_left=chips_left(hist, cur + 1), chips_used=chips_used(hist),
                 points=entry['summary_overall_points'],
                 rank=entry['summary_overall_rank'], squad_gw=gw)
 
 
 def free_transfers(hist, start, cur):
-    """Replay the season: +1 free transfer each week (max 5), minus transfers used. Wildcard / Free Hit weeks use none."""
+    """Replay the season to get the free transfers available for gameweek cur + 1.
+
+    Normal week: use some (any beyond what you had cost 4 points each), then +1 for next week, never more than 5.
+    Wildcard / Free Hit week: transfers are free and your saved free transfers are KEPT, but you do NOT gain the usual +1
+    (FPL's own example: 4 saved before a Free Hit in GW29 means 4 again in GW30).
+    """
     chips = {c['event']: c['name'] for c in hist['chips']}
     used = {r['event']: r['event_transfers'] for r in hist['current']}
     ft = 1                                             # after the first deadline you have 1 for the next week
     for g in range(start + 1, cur + 1):
-        if chips.get(g) not in ('wildcard', 'freehit'): ft = max(ft - used.get(g, 0), 0)
-        ft = min(ft + 1, 5)
+        if chips.get(g) in ('wildcard', 'freehit'):
+            continue                                   # kept, no +1
+        ft = min(max(ft - used.get(g, 0), 0) + 1, 5)
     return ft
 
 
@@ -261,3 +276,122 @@ def squad_points(P, ids, gws, weights=None, bench_weight=0.1):
         pts = P.loc[xi, f'xp_{g}'].sum() + P.loc[cap, f'xp_{g}'] + bench_weight * P.loc[bench, f'xp_{g}'].sum()
         per[g] = P.loc[xi, f'xp_{g}'].sum() + P.loc[cap, f'xp_{g}']; tot += w * pts
     return tot, per
+
+
+# ------------------------------------------------------------------ week-by-week transfer plan
+def optimise_plan(P, gws, squad, bank, ft, allow_hits=False, max_hits_per_week=1, chip=None, roll_value=1.0, bench_weight=0.1,
+                  banned=(), forced=(), weights=None):
+    """Plan transfers week by week over gws (e.g. the next 3 gameweeks).
+
+    Each week the squad can change. Free transfers follow FPL's rules: you start with ft; each normal week you get +1 for the next
+    week (never more than 5); unused ones roll over. Transfers beyond your free ones cost 4 points (only if allow_hits).
+    A Wildcard (chip='Wildcard') makes the first week's transfers free and keeps your saved transfers without the +1.
+    Prices are assumed not to change during the plan, so a player bought in the plan sells for what he cost.
+    roll_value rewards free transfers still saved at the end, so the plan does not burn a transfer on a tiny gain.
+
+    Returns {'weeks': [{'gw', 'out', 'inn', 'hits', 'ft_before', 'squad'}], 'bank_after'}.
+    """
+    weights = weights or decay(len(gws))
+    owned = set(int(i) for i in squad.id); sellp = squad.set_index('id').sell
+    score = sum(P[f'xp_{g}'] * w for g, w in zip(gws, weights))
+    pool = set(P[(score > 0.8 * len(gws)) & (P.status != 'u')].index) | owned
+    pool = sorted(i for i in pool if i not in banned or i in owned)
+    Q = P.loc[pool]
+    val = {i: int(sellp[i]) if i in owned else int(round(Q.price[i] * 10)) for i in pool}   # what each player costs (or sells for)
+    budget = bank + sum(int(sellp[i]) for i in owned)
+    T = range(len(gws))
+    m = pulp.LpProblem('plan', pulp.LpMaximize)
+    x = {(i, t): pulp.LpVariable(f'x{i}_{t}', cat='Binary') for i in pool for t in T}
+    s = {(i, t): pulp.LpVariable(f's{i}_{t}', cat='Binary') for i in pool for t in T}
+    c = {(i, t): pulp.LpVariable(f'c{i}_{t}', cat='Binary') for i in pool for t in T}
+    inn = {(i, t): pulp.LpVariable(f'in{i}_{t}', cat='Binary') for i in pool for t in T}
+    F = {t: pulp.LpVariable(f'ft{t}', lowBound=0, upBound=5, cat='Integer') for t in list(T) + [len(gws)]}   # free transfers at the start of week t
+    used = {t: pulp.LpVariable(f'used{t}', lowBound=0, upBound=5, cat='Integer') for t in T}
+    hits = {t: pulp.LpVariable(f'hits{t}', lowBound=0, upBound=15, cat='Integer') for t in T}
+    m += F[0] == ft
+    obj = []
+    for t in T:
+        g = gws[t]
+        for p, n in SQUAD_NEED.items(): m += pulp.lpSum(x[i, t] for i in pool if Q.pos[i] == p) == n
+        for tm in Q.team_id.unique(): m += pulp.lpSum(x[i, t] for i in pool if Q.team_id[i] == tm) <= 3
+        m += pulp.lpSum(val[i] * x[i, t] for i in pool) <= budget
+        for i in pool:
+            prev = (1 if i in owned else 0) if t == 0 else x[i, t - 1]
+            m += inn[i, t] >= x[i, t] - prev                     # bought this week
+            m += s[i, t] <= x[i, t]; m += c[i, t] <= s[i, t]
+        for i in forced: m += x[i, t] == 1
+        n_t = pulp.lpSum(inn[i, t] for i in pool)
+        m += pulp.lpSum(s[i, t] for i in pool) == 11; m += pulp.lpSum(c[i, t] for i in pool) == 1
+        for p in (1, 2, 3, 4):
+            grp = [s[i, t] for i in pool if Q.pos[i] == p]; m += pulp.lpSum(grp) >= XI_MIN[p]; m += pulp.lpSum(grp) <= XI_MAX[p]
+        if t == 0 and chip == 'Wildcard':
+            m += used[t] == 0; m += hits[t] == 0; m += F[t + 1] == F[t]          # free week; saved transfers kept, no +1
+        else:
+            m += used[t] <= F[t]; m += used[t] <= n_t
+            m += hits[t] >= n_t - used[t]
+            m += hits[t] <= (max_hits_per_week if allow_hits else 0)
+            m += F[t + 1] <= F[t] - used[t] + 1                                # unused ones roll, +1 each week
+        for i in pool:
+            xp = float(Q.loc[i, f'xp_{g}'])
+            obj.append(weights[t] * xp * (s[i, t] + c[i, t] + bench_weight * (x[i, t] - s[i, t])))
+        obj.append(-HIT * hits[t])
+    m += pulp.lpSum(obj) + roll_value * F[len(gws)]
+    m.solve(pulp.PULP_CBC_CMD(msg=0, timeLimit=90))
+    if pulp.LpStatus[m.status] != 'Optimal':
+        raise ValueError('No legal plan can be found with these settings (check the 3-per-club rule, the budget and any players you forced or banned).')
+    weeks, prev = [], set(owned); bank_now = bank
+    for t in T:
+        cur = {i for i in pool if x[i, t].value() > 0.5}
+        out_, in_ = sorted(prev - cur), sorted(cur - prev)
+        bank_now += sum(val[i] for i in out_) - sum(val[i] for i in in_)
+        weeks.append(dict(gw=gws[t], out=out_, inn=in_, hits=int(round(hits[t].value() or 0)), ft_before=int(round(F[t].value())), squad=sorted(cur), bank=bank_now))
+        prev = cur
+    return dict(weeks=weeks, bank_after=bank_now, ft_end=int(round(F[len(gws)].value())))
+
+
+# ------------------------------------------------------------------ mini-leagues
+def load_league(lid, boot, max_managers=30):
+    """A classic league's standings and, for the top max_managers, each manager's latest squad, captain and chips.
+
+    Rivals' transfers and captain for the coming gameweek stay hidden until its deadline, so this uses their last gameweek's team.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    data = get(f'leagues-classic/{int(lid)}/standings/')
+    rows = data['standings']['results'][:max_managers]
+    ev = [e for e in boot['events'] if e['finished'] or e['is_current']]
+    cur = max(e['id'] for e in ev) if ev else 1
+    nxt = cur + 1
+
+    def one(r):
+        eid = r['entry']
+        try:
+            hist = get(f'entry/{eid}/history/'); picks = get(f'entry/{eid}/event/{cur}/picks/')
+        except Exception:
+            return None
+        ids = [p['element'] for p in picks['picks']]
+        cap = next((p['element'] for p in picks['picks'] if p['is_captain']), None)
+        return dict(entry=eid, manager=r['player_name'], team=r['entry_name'], rank=r['rank'], last_rank=r['last_rank'], total=r['total'],
+                    gw_points=r['event_total'], squad=ids, xi=[p['element'] for p in picks['picks'] if p['multiplier'] > 0] or ids[:11], captain=cap,
+                    active_chip=picks.get('active_chip'), chips_left=chips_left(hist, nxt), bank=hist['current'][-1]['bank'] if hist['current'] else 0)
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        out = [x for x in pool.map(one, rows) if x]
+    return dict(name=data['league']['name'], managers=out, n_total=len(data['standings']['results']), has_more=data['standings']['has_next'], gw=cur)
+
+
+def league_ownership(L, exclude=None):
+    """Share of managers in the league (optionally excluding yourself) who own / captained each player."""
+    ms = [m for m in L['managers'] if m['entry'] != exclude]
+    n = max(len(ms), 1)
+    own, cap = {}, {}
+    for m in ms:
+        for i in m['squad']: own[i] = own.get(i, 0) + 1 / n
+        if m['captain']: cap[m['captain']] = cap.get(m['captain'], 0) + 1 / n
+    return pd.Series(own, dtype=float), pd.Series(cap, dtype=float), n
+
+
+def league_P(P, own, gws):
+    """Projections re-weighted for beating your league: a player's points only gain ground on the rivals who do NOT own him."""
+    Q = P.copy()
+    o = own.reindex(Q.index).fillna(0.0)
+    for g in gws: Q[f'xp_{g}'] = Q[f'xp_{g}'] * (1 - o)
+    return Q

@@ -59,6 +59,201 @@ html = lambda s: st.markdown(s, unsafe_allow_html=True)
 sec = lambda t, s='': html(f'<div class="sec">{t}<small>{s}</small></div>')
 
 # ------------------------------------------------------------------ sidebar: the team
+def click_pitch(xi, bench, cap, vice, g, ins=(), outs=(), moved=(), clickable=True, tag='r', order=None, diffs=(), tip='Change {name}: transfer him, bench him or make him captain'):
+    """A formation made of Streamlit columns, styled like the Transfers pitches. Both Planner pitches use it, so they are the same size.
+    clickable: each name tag is a button (returns the id clicked). ins / outs / moved: highlighted green / red / cyan (lineup change)."""
+    xp = P[f'xp_{g}']; clicked = None
+
+    def cell(i, col):
+        nonlocal clicked
+        r = P.loc[i]
+        b = '<div class="badge">C</div>' if i == cap else ('<div class="badge v">V</div>' if i == vice else '')
+        f = '' if pd.isna(r.chance) or r.chance >= 100 else f'<div class="flag {"r" if r.chance <= 25 else ""}">!</div>'
+        kind = 'in' if i in ins else ('out' if i in outs else ('mv' if i in moved else ('diff' if i in diffs else '')))
+        shirt_ = f'<div class="pshirt {"faded" if i in outs else ""}">{b}{f}<img src="{ui.shirt(r.team_code, r.pos == 1)}"></div>'
+        v = xp[i] * (2 if i == cap else 1)
+        below = f'<div class="ppt">{v:.1f} pts</div><div class="pfx">{ui.esc(r[f"opp_{g}"])}</div>'
+        if clickable:
+            col.markdown(shirt_, unsafe_allow_html=True)
+            if col.button(r['name'], key=f'pp{kind}_{tag}_{g}_{i}', help=tip.format(name=r['name']), use_container_width=True): clicked = i
+            col.markdown(below, unsafe_allow_html=True)
+        else:   # one block: shirt, name, points, fixture
+            col.markdown(shirt_ + f'<div class="pnm {kind}">{ui.esc(r["name"])}</div>' + below, unsafe_allow_html=True)
+    with st.container(key=f'plpitch_{tag}_{g}'):
+        for p in (1, 2, 3, 4):
+            ids_ = [i for i in xi if P.pos[i] == p]
+            if order: ids_ = sorted(ids_, key=lambda i: order.index(i) if i in order else 99)   # same spot on both pitches
+            cols = st.columns(len(ids_))
+            for i, col in zip(ids_, cols): cell(i, col)
+    with st.container(key=f'plbench_{tag}_{g}'):
+        html('<div class="blab">BENCH</div>')
+        cols = st.columns(len(bench))
+        for i, col in zip(bench, cols): cell(i, col)
+    return clicked
+
+
+def set_made(lst):
+    """Save the transfers you already made, for THIS team only (session + page address, so a refresh keeps them)."""
+    tid_ = str(st.session_state.get('eid', 'manual')).strip()
+    st.session_state['made'] = lst
+    st.session_state.setdefault('made_by_team', {})[tid_] = lst
+    if lst: st.query_params['made'] = f'{tid_}~' + ','.join(f'{o}-{i}' for o, i in lst)
+    elif 'made' in st.query_params: del st.query_params['made']
+
+
+def load_made(tid_):
+    """Confirmed transfers for this team: from this session, or from the page address if it was saved for this same team."""
+    by = st.session_state.setdefault('made_by_team', {})
+    if tid_ in by: return list(by[tid_])
+    raw = st.query_params.get('made', '')
+    if '~' not in raw: return []                                   # old links (no team) are ignored, so they can never leak into another team
+    owner, pairs_ = raw.split('~', 1)
+    if owner != tid_: return []
+    return [tuple(int(x) for x in p_.split('-')) for p_ in pairs_.split(',') if '-' in p_]
+
+
+def bank_after(team_, new):
+    """Bank after these transfers, from your current team (selling prices for players you own, today's price for players bought)."""
+    sellp = team_['squad'].set_index('id').sell; bank = team_['bank']
+    for o, i in new:
+        bank += int(sellp[o]) if o in sellp.index else int(round(P.price[o] * 10))
+        bank -= int(round(P.price[i] * 10))
+    return bank
+
+
+def confirm_block(new, made_now, team_, gw, after=None, key='cf'):
+    """The 'are you sure?' content: the moves, free transfers used, any hit, the money, and that it cannot be undone."""
+    ft_left = team_['free_transfers']; n = len(new); free_used = min(n, ft_left); hits = n - free_used
+    bk = bank_after(team_, new)
+    card = lambda i, kind: (f'<div class="mv {kind}"><img src="{ui.shirt(P.team_code[i], P.pos[i] == 1)}"><div><div class="bigname">{ui.esc(P.name[i])}</div>'
+                            f'<div class="m">{P.team[i]} · {POS[P.pos[i]]} · £{P.price[i]:.1f}m</div></div></div>')
+    html('<div class="note" style="margin-bottom:6px">You are telling the app you have made these transfers for GW%d in the FPL app:</div>' % gw)
+    for o, i in new:
+        html(f'<div class="move" style="margin:4px 0">{card(o, "out")}<div class="arrow">→</div>{card(i, "in")}</div>')
+    if bk < 0:
+        html(f'<div class="card" style="padding:12px 14px;border-color:#e90052;margin:8px 0"><div class="v" style="color:#e90052;font-size:1.2rem">Over budget by £{-bk / 10:.1f}m</div>'
+             f'<div class="l" style="font-size:.88rem">You have £{team_["bank"] / 10:.1f}m in the bank. FPL would not allow this transfer, so it cannot be confirmed. Pick a cheaper player.</div></div>')
+    else:
+        html(f'<div class="note" style="margin:6px 0">Bank afterwards: <b style="color:#00ff87">£{bk / 10:.1f}m</b></div>')
+    if hits:
+        html(f'<div class="card" style="padding:12px 14px;border-color:#e90052;margin:8px 0"><div class="v" style="color:#e90052;font-size:1.2rem">−{fe.HIT * hits} points</div>'
+             f'<div class="l" style="font-size:.88rem">You have {ft_left} free transfer{"s" if ft_left != 1 else ""} left, so {hits} of these cost{"s" if hits == 1 else ""} a 4-point hit. '
+             f'It comes off your GW{gw} score everywhere in the app.</div></div>')
+    else:
+        html(f'<div class="note" style="margin:4px 0 8px 0">Uses {free_used} of your {ft_left} free transfer{"s" if ft_left != 1 else ""}. No hit.</div>')
+    html('<div class="note" style="margin:6px 0 10px 0">⚠️ <b style="color:#fff">This cannot be undone here</b>, just like a confirmed transfer in FPL. '
+         'Not sure yet? Try it in the <b>Planner</b> first: you can change your mind there as often as you like.</div>')
+    a, b = st.columns(2)
+    if a.button('Yes, confirm', type='primary', use_container_width=True, key=f'{key}_yes', disabled=bk < 0):
+        set_made(made_now + list(new))
+        if after: after()
+        st.rerun()
+    return b
+
+
+@st.dialog('Remove a confirmed transfer?')
+def remove_made_dialog(k, made_now):
+    o, i = made_now[k]
+    html(f'<div class="note">Remove <b style="color:#e90052">{ui.esc(P.name[o])}</b> → <b style="color:#00ff87">{ui.esc(P.name[i])}</b>?</div>'
+         '<div class="note" style="margin:8px 0">Only do this if you added it <b style="color:#fff">by mistake</b>. If you really made it in the FPL app, keep it: '
+         'FPL will not undo it, and removing it here would make the app plan from the wrong team.</div>')
+    a, b = st.columns(2)
+    if a.button('Yes, remove it', type='primary', use_container_width=True, key='rm_yes'):
+        set_made(made_now[:k] + made_now[k + 1:]); st.rerun()
+    if b.button('Keep it', use_container_width=True, key='rm_no'): st.rerun()
+
+
+@st.dialog('Confirm your transfers')
+def confirm_dialog(new, made_now, team_, gw, after=None):
+    b = confirm_block(new, made_now, team_, gw, after)
+    if b.button('Cancel', use_container_width=True, key='cf_no'): st.rerun()
+
+
+@st.dialog('Add a transfer you have made', width='large')
+def made_dialog(team_, made_now, gw):
+    """Tap who you sold, then pick who you bought, then confirm. All in one pop-up."""
+    S = st.session_state
+    sq = team_['squad'].set_index('id'); ids_ = [int(i) for i in sq.index]
+    o = S.get('md_out'); i_ = S.get('md_in')
+    if o is not None and o not in ids_: o = S['md_out'] = None
+    # step 1: who did you sell? tap him on your team's pitch
+    if o is None:
+        html('<div class="note" style="margin-bottom:6px"><b style="color:#fff">Step 1 of 3.</b> Tap the name of the player you sold.</div>')
+        xi_, cap_, vice_, bench_ = lineup(tuple(sorted(ids_)), gw, BOOST)
+        hit_ = click_pitch(xi_, bench_, cap_, vice_, gw, tag='md', order=ids_, tip='I sold {name}')
+        if hit_ is not None:
+            S['md_out'] = int(hit_); S['md_in'] = None; st.rerun(scope='fragment')
+        return
+    money = team_['bank'] + int(sq.sell[o])
+    top = st.columns([5, 1.2])
+    top[0].markdown(f'<div class="mv out" style="padding:6px 10px"><img src="{ui.shirt(P.team_code[o], P.pos[o] == 1)}"><div><div class="bigname">Sold: {ui.esc(P.name[o])}</div>'
+                    f'<div class="m">{P.team[o]} · {POS[P.pos[o]]} · sells for £{sq.sell[o] / 10:.1f}m · money available £{money / 10:.1f}m</div></div></div>', unsafe_allow_html=True)
+    if top[1].button('Change', key='md_change_out', use_container_width=True):
+        S['md_out'] = None; S['md_in'] = None; st.rerun(scope='fragment')
+    # step 2: who did you buy?
+    if i_ is None:
+        html('<div class="note" style="margin:8px 0 4px 0"><b style="color:#fff">Step 2 of 3.</b> Pick the player you bought.</div>')
+        cand = P[(P.pos == P.pos[o]) & ~P.index.isin(ids_)].copy()
+        f1, f2, f3 = st.columns([2, 1.6, 1.6])
+        teams = f1.multiselect('Teams', sorted(cand.team.unique()), placeholder='All teams', key='md_tm')
+        mx = f2.slider('Max price (£m)', 3.5, 16.0, 16.0, 0.5, key='md_mx')
+        q = f3.text_input('Search', placeholder='Name', key='md_q')
+        if teams: cand = cand[cand.team.isin(teams)]
+        cand = cand[cand.price <= mx + 1e-9]
+        if q: cand = cand[cand.name.str.contains(q, case=False)]
+        cand = cand.sort_values(['selected', 'price'], ascending=False)        # most-owned first: the players people usually buy
+        n = S.get('md_n', 12)
+        for i, r_ in cand.head(n).iterrows():
+            a, b = st.columns([6, 1.3])
+            short = round(r_.price * 10) - money
+            a.markdown(f'<div class="mv {"out" if short > 0 else "in"}" style="padding:5px 10px"><img src="{ui.shirt(r_.team_code, r_.pos == 1)}"><div><div class="bigname">{ui.esc(r_["name"])} '
+                       f'<span class="note">{r_.team}</span></div><div class="m">£{r_.price:.1f}m · owned {r_.selected:.0f}%'
+                       + (f' · <b style="color:#e90052">over budget by £{short / 10:.1f}m</b>' if short > 0 else '') + '</div></div></div>', unsafe_allow_html=True)
+            if b.button('Transfer' if short <= 0 else 'Too costly', key=f'md_i_{i}', disabled=short > 0, type='primary' if short <= 0 else 'secondary', use_container_width=True):
+                S['md_in'] = int(i); st.rerun(scope='fragment')
+        if cand.empty: st.info('No players match.')
+        if len(cand) > n and st.button('Show more', key='md_more'): S['md_n'] = n + 12; st.rerun(scope='fragment')
+        return
+    # step 3: confirm
+    html('<div class="note" style="margin:8px 0 4px 0"><b style="color:#fff">Step 3 of 3.</b> Check and confirm.</div>')
+    b = confirm_block([(int(o), int(i_))], made_now, team_, gw, after=lambda: [S.pop(k, None) for k in ('md_out', 'md_in', 'md_n')], key='mdcf')
+    if b.button('Back', use_container_width=True, key='md_back'):
+        S['md_in'] = None; st.rerun(scope='fragment')
+
+
+def apply_made(team_, made_):
+    """Your squad after the transfers you already made: new players in, bank and free transfers updated. Returns (team, the transfers that still apply)."""
+    orig = [int(i) for i in team_['squad'].id]                     # your GW10 squad, before any confirmed GW11 transfers
+    base = dict(orig_ids=orig, orig_bank=team_['bank'], orig_ft=team_['free_transfers'], orig_squad=team_['squad'].copy())
+    if not made_: return dict(team_, made=[], made_hits=0, **base), []
+    sq = team_['squad'].copy(); bank = team_['bank']; ok = []
+    for o, i in made_:
+        if o not in set(sq.id) or i in set(sq.id) or i not in P.index or P.pos[o] != P.pos[i]: continue
+        row = sq.index[sq.id == o][0]; now_ = int(round(P.price[i] * 10))
+        bank += int(sq.loc[row, 'sell']) - now_
+        sq.loc[row, ['id', 'buy', 'now', 'sell', 'pos']] = [i, now_, now_, now_, P.pos[i]]
+        ok.append((o, i))
+    sq['id'] = sq.id.astype(int)
+    ft = team_['free_transfers']; hits = max(len(ok) - ft, 0)
+    return dict(team_, squad=sq.reset_index(drop=True), bank=bank, free_transfers=max(ft - len(ok), 0), made=ok, made_hits=hits, **base), ok
+
+
+def remember(key, qp):
+    """Streamlit forgets an input's value when it is not on screen (another tab). Keep a copy, and put it in the page address so a refresh keeps it too."""
+    store = f'_{key}'
+    if store not in st.session_state: st.session_state[store] = st.query_params.get(qp, '') or str(st.session_state.get(key, '') or '')
+    if str(st.session_state.get(key, '') or '').strip() == '' and st.session_state[store]:
+        st.session_state[key] = st.session_state[store]          # the box was wiped while you were on another tab: put the value back
+
+
+def remember_save(key, qp):
+    v = str(st.session_state.get(key, '')).strip(); st.session_state[f'_{key}'] = v
+    if v.isdigit(): st.query_params[qp] = v
+    elif qp in st.query_params: del st.query_params[qp]
+
+
+remember('eid', 'team'); remember('lid', 'league')
+
 with st.sidebar:
     if BOOST: st.caption(f'Form boost on: {BOOST:.0%}')
     html('<div style="font-family:Outfit;font-size:1.5rem;font-weight:800;margin:4px 0 2px 0">FPL <span style="color:#00ff87">Predictor</span></div>'
@@ -67,7 +262,8 @@ with st.sidebar:
     mode = st.segmented_control('Your team', ['Team ID', 'Pick players'], default='Team ID', key='mode')
     team = None
     if mode != 'Pick players':
-        eid = st.text_input('FPL team ID', placeholder='e.g. 1234567', key='eid', help='On the FPL website open Points. The number after /entry/ in the address is your ID.')
+        eid = st.text_input('FPL team ID', placeholder='e.g. 1234567', key='eid', help='On the FPL website open Points. The number after /entry/ in the address is your ID.',
+                            on_change=remember_save, args=('eid', 'team'))
         if eid.strip().isdigit():
             try: team = load_team(int(eid), boot)
             except requests.HTTPError: st.error('No team found with that ID.')
@@ -87,11 +283,39 @@ with st.sidebar:
                         chips_left=['Wildcard', 'Free Hit', 'Bench Boost', 'Triple Captain'], chips_used=[], points=None, rank=None, squad_gw=None)
         else: st.caption(f'{len(picked)} of 15 picked')
     if team is not None:
+        # ---- transfers already made in the FPL app for the coming gameweek (FPL keeps them private until the deadline, so you tell us)
+        tid = str(st.session_state.get('eid', 'manual'))
+        if st.session_state.get('_made_for') != tid:                     # a different team: load ITS confirmed transfers (never another team's)
+            st.session_state['_made_for'] = tid
+            st.session_state['made'] = load_made(tid)
+            if st.session_state['made']: st.query_params['made'] = f'{tid}~' + ','.join(f'{o}-{i}' for o, i in st.session_state['made'])
+            elif 'made' in st.query_params: del st.query_params['made']
+        made = st.session_state.setdefault('made', [])
+        team, made_ok = apply_made(team, made)
+        if len(made_ok) < len(made): st.session_state['made'] = made = made_ok
+        with st.expander(f'Transfers already made for GW{G0}' + (f' ({len(made)})' if made else ''), expanded=bool(made)):
+            st.caption('Made a transfer in the FPL app? FPL keeps it private until the deadline, so add it here and every tab will use your new team.')
+            for k, (o_, i_) in enumerate(made):
+                a_, b_ = st.columns([5, 1.1])
+                a_.markdown(f'<div class="note">🔒 <b style="color:#e90052">{ui.esc(P.name[o_])}</b> → <b style="color:#00ff87">{ui.esc(P.name[i_])}</b></div>', unsafe_allow_html=True)
+                if b_.button('✕', key=f'made_rm_{k}', help='Entered by mistake? Remove it'): remove_made_dialog(k, made)
+            if team.get('made_hits'):
+                st.markdown(f'<div class="note" style="color:#e90052"><b>−{fe.HIT * team["made_hits"]} hit</b> taken off your GW{G0} score.</div>', unsafe_allow_html=True)
+            if team['free_transfers'] == 0:
+                st.markdown('<div class="note" style="color:#e90052">No free transfers left: another one costs −4.</div>', unsafe_allow_html=True)
+            if st.button('➕ Add a transfer I\'ve made', use_container_width=True, key='md_open'):
+                for k in ('md_out', 'md_in', 'md_n'): st.session_state.pop(k, None)
+                made_dialog(team, made, G0)
         with st.expander('Bank and free transfers'):
-            team['bank'] = int(round(st.number_input('Bank (£m)', 0.0, 100.0, team['bank'] / 10, 0.1, key='bank') * 10))
-            team['free_transfers'] = st.number_input('Free transfers', 0, 5, int(team['free_transfers']), key='ft')
+            sig = f'{tid}_{"_".join(f"{o}-{i}" for o, i in made)}'      # a new key whenever your transfers change, so the boxes refresh
+            team['bank'] = int(round(st.number_input('Bank (£m)', min(0.0, team['bank'] / 10), 100.0, team['bank'] / 10, 0.1, key=f'bank_{sig}') * 10))
+            if team['bank'] < 0: st.error(f'Your confirmed transfers leave you £{-team["bank"] / 10:.1f}m over budget, which FPL would not allow.')
+            team['free_transfers'] = st.number_input('Free transfers', 0, 5, int(team['free_transfers']), key=f'ft_{sig}')
+            if team.get('made_hits'): st.caption(f'Your transfers include {team["made_hits"]} hit (−{fe.HIT * team["made_hits"]} pts in GW{G0}).')
             st.caption('Worked out from your public transfer history. Check against the FPL site.')
     html(ui.SB_CREDIT)
+
+HIT0 = fe.HIT * team.get('made_hits', 0) if team is not None else 0     # points hit from your confirmed GW11 transfers
 
 # ------------------------------------------------------------------ header and navigation
 def _ago(t):
@@ -102,7 +326,7 @@ sub = (f"{team['manager']} · {team['points']} pts · rank {team['rank']:,}" if 
 html(f'<div class="hero"><div class="hero-title">{ui.esc(team["name"]) if team else "Your FPL team,"} <span>{"GW" + str(G0) if team else "projected."}</span></div>'
      f'<div class="hero-sub">{ui.esc(sub)}</div>'
      f'<span class="pill g">GW{G0} · {deadline:%a %d %b %H:%M} UTC</span><span class="pill">Deadline in {countdown}</span>{updated_pill}</div>')
-page = st.segmented_control('Page', ['My team', 'Transfers', 'Planner', 'Captain', 'Chips', 'Differentials', 'Compare', 'Players', 'Fixtures', 'How it works'], default='My team', label_visibility='collapsed', key='nav') or 'My team'
+page = st.segmented_control('Page', ['My team', 'Transfers', 'Planner', 'Captain', 'Chips', 'League', 'Compare', 'Players', 'Fixtures', 'How it works'], default='My team', label_visibility='collapsed', key='nav') or 'My team'
 
 
 def done():
@@ -124,6 +348,118 @@ def move_card(i, kind, gws):
             f'<div class="m">{r.team} · {POS[r.pos]} · £{r.price:.1f}m · {pts:.1f} pts over {len(gws)} GW{"s" if len(gws) > 1 else ""}</div></div></div>')
 
 
+@st.cache_data(show_spinner=False)
+def run_plan(squad_json, bank, ft, allow_hits, chip, roll, banned, keep, gws, boost=0.0):
+    from io import StringIO
+    return fe.optimise_plan(P, list(gws), pd.read_json(StringIO(squad_json)), bank, ft, allow_hits=allow_hits, chip=chip, roll_value=roll,
+                            banned=list(banned), forced=list(keep))
+
+
+def delta_bar(pb, pa, g, hit=0):
+    pa = pa - hit; d = pa - pb; col = ui.GREEN if d > 0.05 else (ui.PINK if d < -0.05 else '#ffffff')
+    return (f'<div class="card" style="display:flex;align-items:center;gap:18px;padding:10px 16px;margin-bottom:10px"><div><div class="l">GW{ALL_GWS[0] - 1} team, GW{g} points</div><div class="v">{pb:.1f}</div></div>'
+            f'<div style="font-size:1.6rem;color:#00ff87">→</div><div><div class="l">with the changes{f" (after −{hit} hit)" if hit else ""}</div><div class="v">{pa:.1f}</div></div>'
+            f'<div style="margin-left:auto;text-align:right"><div class="l">difference</div><div class="v" style="color:{col}">{d:+.1f} pts</div></div></div>')
+
+
+def compare_pitches(before, after, g, outs=(), ins=(), t_before='Now', t_after='After the changes', hit=0):
+    """Two pitches side by side, now and after the changes, with the points difference between them."""
+    xp = P[f'xp_{g}']
+    lb, la = lineup(tuple(sorted(before)), g, BOOST), lineup(tuple(sorted(after)), g, BOOST)
+    pb = xp[lb[0]].sum() + xp[lb[1]]; pa = xp[la[0]].sum() + xp[la[1]]; d = pa - pb - hit
+    html(delta_bar(pb, pa, g, hit))
+    c1, c3 = st.columns(2)
+    with c1:
+        html(ui.pitch(P, lb[0], lb[3], lb[1], lb[2], {i: xp[i] * (2 if i == lb[1] else 1) for i in before}, {i: P.loc[i, f'opp_{g}'] for i in before}, g,
+                      compact=True, mark_out=set(outs), title=f'{t_before} <small>{pb:.1f} pts</small>'))
+    with c3:
+        html(ui.pitch(P, la[0], la[3], la[1], la[2], {i: xp[i] * (2 if i == la[1] else 1) for i in after}, {i: P.loc[i, f'opp_{g}'] for i in after}, g,
+                      compact=True, mark_in=set(ins), title=f'{t_after} <small>{pa:.1f} pts</small>'))
+    return d
+
+
+@st.dialog('Change a player', width='large')
+def replace_dialog(o, g, squad_now, money, rest, moves, lu):
+    """Pop-up opened by clicking a name on the Planner pitch: transfer him (any player in his position), or change the lineup."""
+    xi, cap, vice, bench = lu
+    colx = lambda i: sum(P.loc[i, f'xp_{x}'] for x in rest)
+    span = f'GW{rest[0]}' + (f'-{rest[-1]}' if len(rest) > 1 else '')
+    html(f'<div class="move" style="grid-template-columns:1fr">{move_card(o, "out", rest)}</div>')
+    t1, t2 = st.tabs(['🔁 Transfer him', '🧢 Lineup and captain'])
+    with t1:
+        html(f'<div class="note">Selling in GW{g} · money available <b style="color:#00ff87">£{money / 10:.1f}m</b> · points shown over {span}</div>')
+        cand = P[(P.pos == P.pos[o]) & (P.status != 'u') & ~P.index.isin(squad_now)].copy(); cand['v'] = [colx(i) for i in cand.index]
+        f1, f2, f3 = st.columns([2.2, 1.6, 1.4])
+        teams = f1.multiselect('Teams', sorted(cand.team.unique()), placeholder='All teams', key=f'dlg_tm_{o}_{g}')
+        mx = f2.slider('Max price (£m)', 3.5, 16.0, 16.0, 0.5, key=f'dlg_mx_{o}_{g}')
+        sort = f3.selectbox('Sort by', ['Projected points', 'Points per £m', 'Price', 'Ownership', 'Form'], key=f'dlg_sort_{o}_{g}')
+        q = st.text_input('Search', placeholder='Search a name', key=f'dlg_q_{o}_{g}', label_visibility='collapsed')
+        c_a, c_b = st.columns(2)
+        fit = c_a.toggle('Hide injured and doubtful', True, key=f'dlg_fit_{o}_{g}')
+        aff = c_b.toggle('Only players I can afford', False, key=f'dlg_aff_{o}_{g}')
+        if teams: cand = cand[cand.team.isin(teams)]
+        cand = cand[cand.price <= mx + 1e-9]
+        if fit: cand = cand[cand.chance.isna() | (cand.chance >= 75)]
+        if aff: cand = cand[(cand.price * 10).round() <= money]
+        if q: cand = cand[cand.name.str.contains(q, case=False)]
+        key_ = {'Projected points': cand.v, 'Points per £m': cand.v / cand.price, 'Price': cand.price, 'Ownership': cand.selected, 'Form': cand.form}[sort]
+        cand = cand.loc[key_.sort_values(ascending=False).index]
+        nshow = st.session_state.get(f'dlg_n_{o}_{g}', 15)
+        html(f'<div class="note" style="margin:4px 0">{len(cand)} {fe.POS_NAME[P.pos[o]]}s · showing {min(nshow, len(cand))}</div>')
+        base = colx(o)
+        for i, r_ in cand.head(nshow).iterrows():
+            a, b = st.columns([6, 1.3])
+            gain = r_.v - base; short = round(r_.price * 10) - money
+            flag = '' if pd.isna(r_.chance) or r_.chance >= 100 else f' · <b style="color:#ffab1b">{int(r_.chance)}% fit</b>'
+            budget = f' · <b style="color:#e90052">over budget by £{short / 10:.1f}m</b>' if short > 0 else ''
+            a.markdown(f'<div class="mv {"out" if short > 0 else "in"}" style="padding:6px 10px"><img src="{ui.shirt(r_.team_code, r_.pos == 1)}"><div><div class="bigname">{ui.esc(r_["name"])} '
+                       f'<span class="note">{r_.team} · {ui.esc(r_[f"opp_{rest[0]}"])}</span></div>'
+                       f'<div class="m">£{r_.price:.1f}m · {r_.v:.1f} pts · <b style="color:{ui.GREEN if gain > 0 else ui.PINK}">{gain:+.1f}</b> vs {ui.esc(P.name[o])}'
+                       f' · owned {r_.selected:.0f}% · form {r_.form:.1f}{flag}{budget}</div></div></div>', unsafe_allow_html=True)
+            if b.button('Transfer', key=f'dlg_pick_{o}_{g}_{i}', type='primary' if short <= 0 else 'secondary', use_container_width=True,
+                        help='Over budget: you can still plan it, and the plan will show how much you are short' if short > 0 else None):
+                st.session_state['pl_moves'] = moves + [dict(gw=g, out=int(o), inn=int(i))]
+                st.rerun()
+        if cand.empty: st.info('No players match these filters.')
+        if len(cand) > nshow and st.button('Show 15 more', key=f'dlg_more_{o}_{g}', use_container_width=True):
+            st.session_state[f'dlg_n_{o}_{g}'] = nshow + 15; st.rerun(scope='fragment')
+    with t2:
+        def save(xi_, cap_, vice_):
+            bench_ = [i for i in squad_now if i not in xi_]
+            st.session_state.setdefault('pl_lineup', {})[g] = dict(bench=bench_, cap=cap_, vice=vice_ if vice_ != cap_ else next(i for i in xi_ if i != cap_))
+            st.rerun()
+        xpg = P[f'xp_{g}']
+        legal = lambda xi_: all(fe.XI_MIN[p] <= sum(P.pos[i] == p for i in xi_) <= fe.XI_MAX[p] for p in (1, 2, 3, 4))
+        if o in xi:
+            html(f'<div class="note"><b style="color:#fff">{ui.esc(P.name[o])}</b> starts in GW{g}. Bring a bench player on instead:</div>')
+            opts = [b for b in bench if legal([i for i in xi if i != o] + [b])]
+            for b in opts:
+                x1, x2 = st.columns([6, 1.3])
+                x1.markdown(f'<div class="mv in" style="padding:6px 10px"><img src="{ui.shirt(P.team_code[b], P.pos[b] == 1)}"><div><div class="bigname">{ui.esc(P.name[b])}</div>'
+                            f'<div class="m">{fe.POS_NAME[P.pos[b]]} · {xpg[b]:.1f} pts in GW{g} · <b style="color:{ui.GREEN if xpg[b] > xpg[o] else ui.PINK}">{xpg[b] - xpg[o]:+.1f}</b></div></div></div>', unsafe_allow_html=True)
+                if x2.button('Bring on', key=f'dlg_sub_{o}_{b}_{g}', use_container_width=True):
+                    save([i for i in xi if i != o] + [b], b if cap == o else cap, b if vice == o else vice)
+            if not opts: st.info('No bench player can replace him without breaking the formation rules (1 GK, 3+ DEF, 2+ MID, 1+ FWD).')
+            k1, k2 = st.columns(2)
+            if o != cap and k1.button('👑 Make captain', key=f'dlg_cap_{o}_{g}', type='primary', use_container_width=True):
+                save(xi, o, cap if vice == o else vice)
+            if o != vice and o != cap and k2.button('Make vice-captain', key=f'dlg_vice_{o}_{g}', use_container_width=True):
+                save(xi, cap, o)
+            if o == cap: html('<div class="note">He is your captain (points doubled).</div>')
+        else:
+            html(f'<div class="note"><b style="color:#fff">{ui.esc(P.name[o])}</b> is on the bench in GW{g}. Put him in the team instead of:</div>')
+            opts = [s_ for s_ in xi if legal([i for i in xi if i != s_] + [o])]
+            for s_ in sorted(opts, key=lambda i: xpg[i]):
+                x1, x2 = st.columns([6, 1.3])
+                x1.markdown(f'<div class="mv out" style="padding:6px 10px"><img src="{ui.shirt(P.team_code[s_], P.pos[s_] == 1)}"><div><div class="bigname">{ui.esc(P.name[s_])}</div>'
+                            f'<div class="m">{fe.POS_NAME[P.pos[s_]]} · {xpg[s_]:.1f} pts in GW{g} · swapping gives <b style="color:{ui.GREEN if xpg[o] > xpg[s_] else ui.PINK}">{xpg[o] - xpg[s_]:+.1f}</b></div></div></div>', unsafe_allow_html=True)
+                if x2.button('Swap', key=f'dlg_sw_{o}_{s_}_{g}', use_container_width=True):
+                    save([i for i in xi if i != s_] + [o], o if cap == s_ else cap, o if vice == s_ else vice)
+            if not opts: st.info('He cannot come on without breaking the formation rules.')
+    if st.button('Close', key=f'dlg_close_{o}_{g}'):
+        st.rerun()
+
+
 def pairs(res):
     inn = list(res['inn']); out = []
     for o in sorted(res['out'], key=lambda x: P.pos[x]):
@@ -138,9 +474,9 @@ if page == 'My team':
     gw_lab = st.segmented_control('Gameweek', [f'GW{g}' for g in ALL_GWS[:6]], default=f'GW{G0}', label_visibility='collapsed') or f'GW{G0}'
     gw = int(gw_lab[2:]); xp = P[f'xp_{gw}']
     xi, cap, vice, bench = lineup(ids, gw, BOOST)
-    total = xp[xi].sum() + xp[cap]; bpts = xp[bench].sum()
+    total = xp[xi].sum() + xp[cap] - (HIT0 if gw == G0 else 0); bpts = xp[bench].sum()
     value = (team['squad'].now.sum() + team['bank']) / 10
-    html(ui.cards([(f'{total:.0f}', f'projected GW{gw} points', 'g'), (ui.esc(P.name[cap]), f'captain · {2 * xp[cap]:.1f} pts', 'c'),
+    html(ui.cards([(f'{total:.0f}', f'projected GW{gw} points' + (f' (after −{HIT0} hit)' if HIT0 and gw == G0 else ''), 'g'), (ui.esc(P.name[cap]), f'captain · {2 * xp[cap]:.1f} pts', 'c'),
                    (f'{bpts:.1f}', 'bench points', ''), (f'£{value:.1f}m', 'team value', ''),
                    (f'£{team["bank"] / 10:.1f}m', 'in the bank', ''), (team['free_transfers'], 'free transfers', '')]))
     c1, c2 = st.columns([3, 2], gap='large')
@@ -154,7 +490,7 @@ if page == 'My team':
         sec('Next 6 gameweeks', 'projected team points, no transfers')
         gs = ALL_GWS[:6]; tots = []
         for g in gs:
-            x2, c2_, _, _ = lineup(ids, g, BOOST); tots.append(P.loc[x2, f'xp_{g}'].sum() + P.loc[c2_, f'xp_{g}'])
+            x2, c2_, _, _ = lineup(ids, g, BOOST); tots.append(P.loc[x2, f'xp_{g}'].sum() + P.loc[c2_, f'xp_{g}'] - (HIT0 if g == G0 else 0))
         fig = go.Figure(go.Bar(x=[f'GW{g}' for g in gs], y=tots, marker=dict(color=[ui.GREEN if g == gw else '#7a3f86' for g in gs]),
                                text=[f'{t:.0f}' for t in tots], textposition='outside', hovertemplate='%{x}: %{y:.1f} pts<extra></extra>'))
         html_fig = ui.plot_style(fig, 250); html_fig.update_yaxes(range=[0, max(tots) * 1.2], showticklabels=False)
@@ -175,46 +511,77 @@ if page == 'My team':
 elif page == 'Transfers':
     if team is None: need_team(); done()
     ids = [int(i) for i in team['squad'].id]
-    c1, c2, c3, c4 = st.columns([1.2, 1.2, 1, 1])
-    plan = c1.segmented_control('Plan over', ['1 GW', '3 GWs'], default='3 GWs', key='plan') or '3 GWs'
+    c1, c2, c3 = st.columns([1.3, 1.6, 1.1])
+    plan = c1.segmented_control('Plan over', ['1 GW', '2 GWs', '3 GWs'], default='3 GWs', key='plan') or '3 GWs'
     chip = c2.segmented_control('Transfer chip', ['None'] + [x for x in team['chips_left'] if x in ('Wildcard', 'Free Hit')], default='None', key='chip') or 'None'
-    maxt = c3.number_input('Max transfers', 1, 5, min(max(team['free_transfers'], 1) + 1, 5), disabled=chip != 'None')
-    roll = c4.number_input('Saving a transfer is worth', 0.0, 3.0, 1.0, 0.5, help='Points. A transfer must gain at least this much to be used now.')
-    html('<div class="note" style="margin:-4px 0 8px 0">Only Wildcard and Free Hit change transfers. For Bench Boost, Triple Captain and the best week to play each chip, open the <b>Chips</b> tab.</div>')
-    with st.expander('Never buy / always keep'):
-        a, b = st.columns(2)
-        banned = a.multiselect('Never buy', [i for i in P.index if i not in ids], format_func=LAB.get)
-        keep = b.multiselect('Always keep', ids, format_func=LAB.get)
-    gws = ALL_GWS[:int(plan.split()[0])]; ch = None if chip == 'None' else chip
+    c3.write(''); allow_hits = c3.toggle('Allow −4 hits', False, key='hits', help='Off: only your free transfers are used. On: up to one extra transfer a week if it gains more than 4 points.')
+    html(f'<div class="note" style="margin:-4px 0 8px 0">You have <b style="color:#00ff87">{team["free_transfers"]} free transfer{"s" if team["free_transfers"] != 1 else ""}</b> this week'
+         + (f' ({len(team["pending"])} already made)' if team.get('pending') else '') + '. Unused ones roll over (up to 5). '
+         'Bench Boost, Triple Captain and the best week for each chip are on the <b>Chips</b> tab.</div>')
+    with st.expander('More options'):
+        a_, b_, c_ = st.columns(3)
+        banned = a_.multiselect('Never buy', [i for i in P.index if i not in ids], format_func=LAB.get)
+        keep = b_.multiselect('Always keep', ids, format_func=LAB.get)
+        roll = c_.slider('A saved free transfer is worth (pts)', 0.0, 3.0, 1.0, 0.5, help='Stops the plan using a transfer for a tiny gain.')
+    gws = ALL_GWS[:1] if chip == 'Free Hit' else ALL_GWS[:int(plan[0])]
     sj = team['squad'][['id', 'sell', 'now']].to_json()
-    base, _ = fe.squad_points(P, ids, gws if ch != 'Free Hit' else gws[:1])
-    opts = []
-    with st.spinner('Checking every legal squad...'):
-        for k in ([maxt] if ch else range(0, maxt + 1)):
-            try: res = run_opt(sj, team['bank'], team['free_transfers'], k, ch, roll, tuple(banned), tuple(keep), tuple(gws), BOOST)
-            except ValueError: continue
-            v, _ = fe.squad_points(P, res['squad'], res['gws'])
-            opts.append((k, res, v - base - fe.HIT * res['hits']))
-    if not opts: st.error('No legal squad can be reached with these settings. Check the never buy and always keep lists.'); done()
-    k, res, gain = opts[-1]
-    sec('Suggested transfers', f'planning over GW{res["gws"][0]}' + (f' to GW{res["gws"][-1]}, later weeks count a little less' if len(res['gws']) > 1 else ''))
-    if not res['inn']:
-        html('<div class="card" style="padding:18px"><div class="v g" style="font-size:1.3rem">Hold. Keep your team.</div><div class="l" style="font-size:.9rem">No transfer gains enough to be worth it'
-             + (', and saving gives you an extra free transfer next week.' if team['free_transfers'] < 5 else '.') + '</div></div>')
+    with st.spinner('Planning your transfers...'):
+        try:
+            if chip == 'Free Hit':
+                fh = run_opt(sj, team['bank'], team['free_transfers'], 15, 'Free Hit', roll, tuple(banned), tuple(keep), tuple(gws), BOOST)
+                R = dict(weeks=[dict(gw=gws[0], out=fh['out'], inn=fh['inn'], hits=0, ft_before=team['free_transfers'], squad=fh['squad'], bank=fh['bank_after'])], bank_after=fh['bank_after'])
+            else:
+                R = run_plan(sj, team['bank'], team['free_transfers'], allow_hits, None if chip == 'None' else chip, roll, tuple(banned), tuple(keep), tuple(gws), BOOST)
+        except ValueError as e:
+            st.error(str(e)); done()
+    pts = lambda sq_, g: (lambda lu: P.loc[lu[0], f'xp_{g}'].sum() + P.loc[lu[1], f'xp_{g}'])(lineup(tuple(sorted(sq_)), g, BOOST))
+    W = R['weeks']; per_gain = [pts(w['squad'], w['gw']) - pts(ids, w['gw']) for w in W]
+    hits_tot = sum(w['hits'] for w in W); net = sum(per_gain) - fe.HIT * hits_tot
+    n_moves = sum(len(w['inn']) for w in W)
+    colr = ui.GREEN if net > 0 else (ui.PINK if net < 0 else '#ffffff')
+    html(ui.cards([(f'<span style="color:{colr}">{net:+.1f}</span>', f'points gained over {"GW" + str(gws[0]) if len(gws) == 1 else f"GW{gws[0]}-{gws[-1]}"} vs no transfers (after hits)', ''),
+                   (str(len(W[0]['inn'])), f'transfer{"s" if len(W[0]["inn"]) != 1 else ""} this week', 'g'), (f'−{fe.HIT * hits_tot}' if hits_tot else '0', 'hit points', ''),
+                   (f'£{W[0]["bank"] / 10:.1f}m', 'bank after this week', 'c')]))
+    if chip == 'Free Hit':
+        html('<div class="note">Free Hit: this team plays GW%d only. Your current squad comes back next week, and your free transfers are kept.</div>' % gws[0])
     else:
-        for o, i in pairs(res):
-            html(f'<div class="move">{move_card(o, "out", res["gws"])}<div class="arrow">→</div>{move_card(i, "in", res["gws"])}</div>')
-        html(f'<div style="margin:10px 0 4px 0"><span class="gain">{gain:+.1f} pts</span> &nbsp; <span class="note">expected gain after {res["hits"]} hit'
-             f'{"s" if res["hits"] != 1 else ""} (−{fe.HIT * res["hits"]}) · bank afterwards £{res["bank_after"] / 10:.1f}m</span></div>')
-    if not ch and len(opts) > 1:
-        sec('Every option')
-        rows = ''.join(f'<tr><td><b>{"Hold" if kk == 0 else f"Up to {kk}"}</b></td><td>{", ".join(f"{ui.esc(P.name[o])} → {ui.esc(P.name[i])}" for o, i in pairs(rr)) or "No transfer"}</td>'
-                       f'<td>{rr["hits"]}</td><td><b style="color:{ui.GREEN if g > 0 else "#fff"}">{g:+.1f}</b></td></tr>' for kk, rr, g in opts)
-        html(f'<table class="fpl"><tr><th>Transfers</th><th>Moves</th><th>Hits</th><th>Gain</th></tr>{rows}</table>')
-    g1 = res['gws'][0]; xi, cap, vice, bench = fe.best_xi(res['squad'], P, g1); xp = P[f'xp_{g1}']
-    sec(f'Your GW{g1} team after these moves', f'{xp[xi].sum() + xp[cap]:.0f} projected points')
-    html(ui.pitch(P, xi, bench, cap, vice, {i: xp[i] * (2 if i == cap else 1) for i in res['squad']}, {i: P.loc[i, f'opp_{g1}'] for i in res['squad']}, g1))
-    html('<div class="note" style="margin-top:8px">Projections are averages. A move worth one or two points is close to a coin flip in a single week, so weigh injury news, rotation and price changes too.</div>')
+        html('<div class="note" style="margin:-2px 0 6px 0">Why the answer can change with the horizon: a transfer keeps paying off every week you keep the new player, '
+             'while saving the transfer is worth about %.1f point. Over 1 week a small gain may not beat saving it (so: hold); over 3 weeks the same move adds up and wins (so: do it now).</div>' % roll)
+
+    # ---- this week: two pitches, now vs after the moves
+    w0 = W[0]; g = w0['gw']
+    orig = team.get('orig_ids', ids); conf = team.get('made', [])
+    sec(f'This week · GW{g}', f'left: your GW{g - 1} team · right: with ' + ('your confirmed and ' if conf else '') + 'the suggested moves')
+    compare_pitches(orig, w0['squad'], g, [i for i in orig if i not in w0['squad']], [i for i in w0['squad'] if i not in orig],
+                    t_before=f'Your GW{g - 1} team', t_after='With ' + ('confirmed + suggested' if conf else 'the suggested') + ' changes', hit=HIT0 + fe.HIT * w0['hits'])
+    if conf:
+        html('<div class="note" style="margin:2px 0 6px 0">✅ Already made in the FPL app: ' + ', '.join(f'<b>{ui.esc(P.name[o])}</b> → <b style="color:#00ff87">{ui.esc(P.name[i])}</b>' for o, i in conf)
+             + '. The suggestions below come on top of these.</div>')
+    if w0['inn']:
+        for o, i in pairs(dict(out=w0['out'], inn=w0['inn'])):
+            html(f'<div class="move">{move_card(o, "out", gws)}<div class="arrow">→</div>{move_card(i, "in", gws)}</div>')
+        if chip == 'None' and st.button(f'✅ I\'ve made these in the FPL app…', key='made_from_transfers', type='primary',
+                                        help=f'Saves them as your GW{g} team, so every tab uses it'):
+            confirm_dialog([(int(o), int(i)) for o, i in pairs(dict(out=w0['out'], inn=w0['inn']))], st.session_state.get('made', []), team, g)
+    else:
+        html('<div class="card" style="padding:14px"><div class="v g" style="font-size:1.1rem">Hold this week</div><div class="l" style="font-size:.88rem">No move gains enough now. '
+             f'Saving the transfer gives you {min(team["free_transfers"] + 1, 5)} next week.</div></div>')
+
+    # ---- the following weeks
+    if len(W) > 1:
+        sec('The plan for the next weeks', 'what to do each week · points vs keeping your current team')
+        rows_ = ''
+        for w, gain in zip(W, per_gain):
+            moves = ''.join(f'<span class="mv"><img src="{ui.shirt(P.team_code[o], P.pos[o] == 1)}"><span><b>{ui.esc(P.name[o])}</b> → '
+                            f'<b style="color:#00ff87">{ui.esc(P.name[i])}</b></span></span>' for o, i in pairs(dict(out=w['out'], inn=w['inn'])))
+            if not moves: moves = f'<span style="color:#b9a7c2">Hold · roll the transfer</span>'
+            used_ = len(w['inn']); ftb = w['ft_before']
+            ft_txt = 'Wildcard: all free' if (chip == 'Wildcard' and w is W[0]) else f'{ftb} free · uses {min(used_, ftb)}' + (f' + {w["hits"]} hit' if w['hits'] else '')
+            rows_ += (f'<div class="week"><div><div class="gw">GW{w["gw"]}</div><div class="ft">{ft_txt}</div></div><div>{moves}</div>'
+                      f'<div class="pts" style="color:{ui.GREEN if gain - fe.HIT * w["hits"] > 0 else "#b9a7c2"}">{gain - fe.HIT * w["hits"]:+.1f}</div></div>')
+        html(rows_)
+        html('<div class="note" style="margin-top:6px">Each week\'s number is the points that week compared with keeping your current team, after any hit. '
+             'Later weeks are plans, not instructions: the app re-plans every day with new results and team news, so check back before each deadline.</div>')
 
 # ================================================================== COMPARE
 elif page == 'Compare':
@@ -269,98 +636,342 @@ elif page == 'Compare':
         fig = ui.plot_style(fig, 320); fig.update_layout(barmode='group', bargap=0.25)
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-# ================================================================== PLANNER: try your own transfers
+# ================================================================== PLANNER: a sandbox for your own transfers
 elif page == 'Planner':
     if team is None: need_team(); done()
-    sq = team['squad'].set_index('id'); ids = [int(i) for i in sq.index]
-    c1, c2 = st.columns([2, 1.3])
-    hz = c2.segmented_control('Judge over', ['Next GW', 'Next 3'], default='Next 3', key='hz_plan') or 'Next 3'
-    gws = ALL_GWS[:HORIZONS[hz]]
-    sell = c1.multiselect('Players to sell', ids, format_func=lambda i: f'{P.name[i]} ({P.team[i]}, sells for £{sq.sell[i] / 10:.1f}m)', key='sell',
-                          placeholder='Pick the players you want to move on')
-    col = f'h{HORIZONS[hz]}'
-    buys, problems = {}, []
-    if sell:
-        sec('Replacements', f'same position · sorted by projected points over {hz.lower()}')
-        cols = st.columns(min(len(sell), 3))
-        taken = set(ids) - set(sell)
-        for n, o in enumerate(sell):
-            money = team['bank'] + sum(int(sq.sell[x]) for x in sell) - sum(int(round(P.price[b] * 10)) for x, b in buys.items())
-            cand = P[(P.pos == P.pos[o]) & (P.status != 'u') & ~P.index.isin(list(taken) + list(buys.values()))].sort_values(col, ascending=False)
-            # money left for this slot: bank + every sale - replacements already chosen
-            lab = {i: f'{P.name[i]} ({P.team[i]}, £{P.price[i]:.1f}m) · {P.loc[i, col]:.1f} pts' + ('  · over budget' if round(P.price[i] * 10) > money else '') for i in cand.index}
-            b = cols[n % 3].selectbox(f'Replace {P.name[o]}', [None] + cand.index.tolist(), format_func=lambda i: '- choose -' if i is None else lab[i], key=f'buy_{o}')
-            if b is not None: buys[o] = b
-    if sell and len(buys) == len(sell) and len(set(buys.values()) | (set(ids) - set(sell))) < 15:
-        st.error('A replacement is already in your squad. Pick someone else.')
-    elif sell and len(buys) == len(sell):
-        new = [i for i in ids if i not in sell] + list(buys.values())
-        bank_after = team['bank'] + sum(int(sq.sell[o]) for o in sell) - sum(int(round(P.price[b] * 10)) for b in buys.values())
-        clubs = P.loc[new].team.value_counts()
-        if bank_after < 0: problems.append(f'Over budget by £{-bank_after / 10:.1f}m.')
-        if clubs.max() > 3: problems.append(f'Too many players from {clubs.idxmax()} ({clubs.max()}). The limit is 3 per club.')
-        hits = max(0, len(sell) - team['free_transfers']); cost = fe.HIT * hits
-        before = {g: v for g, v in zip(gws, [lineup(tuple(ids), g, BOOST) for g in gws])}
-        after = {g: v for g, v in zip(gws, [lineup(tuple(sorted(new)), g, BOOST) for g in gws])}
-        team_pts = lambda lu, g: P.loc[lu[0], f'xp_{g}'].sum() + P.loc[lu[1], f'xp_{g}']
-        diffs = [team_pts(after[g], g) - team_pts(before[g], g) for g in gws]
-        gross = sum(diffs); net = gross - cost
-        colr = ui.GREEN if net > 0 else ui.PINK
-        sec('The verdict', f'best XI and captain picked each week, before and after')
-        for o, b in buys.items():
-            html(f'<div class="move">{move_card(o, "out", gws)}<div class="arrow">→</div>{move_card(b, "in", gws)}</div>')
-        html(ui.cards([(f'<span style="color:{colr}">{net:+.1f}</span>', f'net points over {hz.lower()} (after hits)', ''), (f'{gross:+.1f}', 'points gained before hits', ''),
-                       (f'−{cost}' if cost else '0', f'hit cost ({len(sell)} transfer{"s" if len(sell) > 1 else ""}, {team["free_transfers"]} free)', ''),
-                       (f'£{bank_after / 10:.1f}m', 'bank afterwards', 'c' if bank_after >= 0 else '')]))
-        for p_ in problems: st.error(p_)
-        if not problems:
-            verdict = ('Worth it.' if net > 1 else 'Marginal: close to a coin flip.' if net > -1 else 'Not worth it.')
-            html(f'<div class="note" style="margin-top:6px"><b style="color:{colr};font-size:1rem">{verdict}</b> '
-                 + ('Remember a saved free transfer has value too.' if hits == 0 and net < 2 else '') + '</div>')
-        if len(gws) > 1:
-            fig = go.Figure(go.Bar(x=[f'GW{g}' for g in gws], y=diffs, marker=dict(color=[ui.GREEN if d >= 0 else ui.PINK for d in diffs]),
-                                   text=[f'{d:+.1f}' for d in diffs], textposition='outside', hovertemplate='%{x}: %{y:+.1f} pts<extra></extra>'))
-            fig = ui.plot_style(fig, 260); lo_, hi_ = min(diffs + [0]), max(diffs + [0]); pad = 0.25 * (hi_ - lo_ or 1)
-            fig.update_yaxes(title='points gained', range=[lo_ - (pad if lo_ < 0 else 0), hi_ + pad])
-            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-        g1 = gws[0]; xi, cap, vice, bench = after[g1]; xp = P[f'xp_{g1}']
-        sec(f'Your GW{g1} team after these moves', f'{team_pts(after[g1], g1):.1f} pts vs {team_pts(before[g1], g1):.1f} now')
-        html(ui.pitch(P, xi, bench, cap, vice, {i: xp[i] * (2 if i == cap else 1) for i in new}, {i: P.loc[i, f'opp_{g1}'] for i in new}, g1))
-    elif sell:
-        st.info('Pick a replacement for each player you are selling.')
-    else:
-        html('<div class="note">Choose players to sell, pick who comes in, and see the net gain or loss in projected points, including hits, '
-             'money left and the club limit. Gains count the best XI and captain each week, so a bench player swap counts for little.</div>')
+    # the Planner replays everything from your GW10 squad: your confirmed GW11 transfers are locked moves, your plans come on top
+    sq0 = team['orig_squad'].set_index('id'); ids = [int(i) for i in team['orig_ids']]
+    PG = ALL_GWS[:3]
+    LOCKED = [dict(gw=PG[0], out=int(o), inn=int(i), locked=True) for o, i in team.get('made', [])]
+    tkey = (team['name'], tuple(sorted(ids)))
+    if st.session_state.get('pl_team') != tkey:                 # a new team starts with an empty plan
+        st.session_state['pl_team'] = tkey; st.session_state['pl_moves'] = []; st.session_state['pl_lineup'] = {}
+    moves = [m for m in st.session_state.setdefault('pl_moves', []) if not m.get('locked')]
+    allm = LOCKED + moves
+    LU = st.session_state.setdefault('pl_lineup', {})          # {gameweek: {'bench': [4 ids], 'cap': id, 'vice': id}} chosen by you
+    sellv = lambda i: int(sq0.sell[i]) if i in sq0.index else int(round(P.price[i] * 10))   # bought in the plan: sells for what it cost
 
-# ================================================================== DIFFERENTIALS
-elif page == 'Differentials':
-    f1, f2, f3, f4 = st.columns([1.3, 1.6, 1.2, 1])
-    pos = f1.pills('Position', ['GK', 'DEF', 'MID', 'FWD'], selection_mode='multi', default=['GK', 'DEF', 'MID', 'FWD'], key='pos_dif')
-    hz = f2.segmented_control('Projected over', list(HORIZONS), default='Next 3', key='hz_dif') or 'Next 3'
-    own = f3.slider('Owned by under (%)', 1, 30, 10, 1, key='own_dif')
-    mx = f4.slider('Max price (£m)', 4.0, 16.0, 16.0, 0.5, key='mx_dif')
-    col = f'h{HORIZONS[hz]}'
-    D = P[(P.status != 'u') & (P.selected < own) & (P.price <= mx) & (P.chance.isna() | (P.chance >= 75))
-          & P.pos.isin([k for k, v in POS.items() if v in (pos or POS.values())])].copy()
-    # the edge over rivals: points you gain on the managers who do not own him
-    D['edge'] = D[col] * (1 - D.selected / 100)
-    D = D.sort_values('edge', ascending=False)
-    if len(D):
-        top = D.iloc[0]
-        html(ui.cards([(ui.esc(top['name']), f'top differential · {top[col]:.1f} pts · owned {top.selected:.1f}%', 'g'),
-                       (f'{len(D)}', f'players under {own}% owned', ''), (f'{D.head(10)[col].mean():.1f}', f'avg projection of the top 10 ({hz.lower()})', 'c')]))
-    sec('Best differentials', f'owned by fewer than {own}% of managers · ranked by edge over rivals')
-    html(ui.player_table(P, D.index[:20], ALL_GWS, col, max_val=D[col].max() if len(D) else 1,
-                         extra=('Edge', lambda i: f'<b style="color:{ui.GREEN}">{D.edge[i]:.1f}</b>')))
-    html('<div class="note" style="margin-top:8px"><b>Edge</b> = projected points × the share of managers who do not own him. '
-         'Points from a player most rivals also own barely move your rank; points from a differential do. Low ownership also means more risk, so check minutes and news.</div>')
+    def replay(mv):
+        """Apply the moves week by week. Returns the squad, bank, free transfers and hits for each week, any rule problems, and the moves that still make sense."""
+        squad, bank, ft = list(ids), team['orig_bank'], team['orig_ft']
+        out, ok, problems = {}, [], []
+        for g in PG:
+            wk = [m for m in mv if m['gw'] == g]; n = 0
+            for m in wk:
+                if m['out'] not in squad or m['inn'] in squad: continue           # no longer possible after an undo
+                squad[squad.index(m['out'])] = m['inn']; bank += sellv(m['out']) - int(round(P.price[m['inn']] * 10)); n += 1; ok.append(m)
+            used = min(n, ft); hits = n - used
+            clubs = P.loc[squad].team.value_counts()
+            if bank < 0: problems.append(f'GW{g}: over budget by £{-bank / 10:.1f}m.')
+            if clubs.max() > 3: problems.append(f'GW{g}: {clubs.max()} players from {clubs.idxmax()} (the limit is 3).')
+            out[g] = dict(squad=list(squad), bank=bank, ft=ft, n=n, hits=hits)
+            ft = min(ft - used + 1, 5)
+        return out, ok, problems
+
+    def follow(i, g_):
+        """A player id chosen for the lineup, updated for transfers made up to week g_ (if he was sold, his replacement takes his place)."""
+        for m in allm:
+            if m['gw'] <= g_ and m['out'] == i: i = m['inn']
+        return i
+
+    def eff_lineup(g_, squad_):
+        """Your chosen XI, bench and captain for week g_, or the best XI if you have not chosen one (or it is no longer legal)."""
+        best = lineup(tuple(sorted(squad_)), g_, BOOST)
+        ov = LU.get(g_)
+        if not ov: return best, False
+        bench = [follow(b, g_) for b in ov['bench']]
+        if len(set(bench)) != 4 or not set(bench) <= set(squad_): return best, False
+        xi = [i for i in squad_ if i not in bench]
+        cnt = P.loc[xi].pos.value_counts()
+        if any(not (fe.XI_MIN[p] <= cnt.get(p, 0) <= fe.XI_MAX[p]) for p in (1, 2, 3, 4)): return best, False
+        cap, vice = follow(ov['cap'], g_), follow(ov['vice'], g_)
+        byxp = sorted(xi, key=lambda i: -P.loc[i, f'xp_{g_}'])
+        if cap not in xi: cap = byxp[0]
+        if vice not in xi or vice == cap: vice = next(i for i in byxp if i != cap)
+        bench = sorted(bench, key=lambda i: (P.pos[i] != 1, bench.index(i)))      # goalkeeper first, then your order
+        return (xi, cap, vice, bench), True
+
+    W, ok_moves, problems = replay(allm)
+    ok_user = [m for m in ok_moves if not m.get('locked')]
+    if len(ok_user) < len(moves):
+        st.session_state['pl_moves'] = moves = ok_user; allm = LOCKED + moves
+        st.toast('Removed a planned move that no longer works.')
+
+    # ---- controls
+    c1, c2, c3 = st.columns([1.6, 1, 1])
+    gsel = c1.segmented_control('Make changes for', [f'GW{g}' for g in PG], default=f'GW{PG[0]}', key='pl_gw') or f'GW{PG[0]}'
+    g = int(gsel[2:])
+    c2.write(''); c2.write('')
+    if c2.button('Start from the suggestion', use_container_width=True, help='Load the Transfers tab plan, then change it as you like'):
+        R = run_plan(team['squad'][['id', 'sell', 'now']].to_json(), team['bank'], team['free_transfers'], False, None, 1.0, (), (), tuple(PG), BOOST)
+        st.session_state['pl_moves'] = [dict(gw=w['gw'], out=o, inn=i) for w in R['weeks'] for o, i in pairs(dict(out=w['out'], inn=w['inn']))]
+        st.rerun()
+    c3.write(''); c3.write('')
+    if c3.button('Reset', use_container_width=True, disabled=not (moves or LU), help='Clears your plans. Confirmed transfers stay.'):
+        st.session_state['pl_moves'] = []; st.session_state['pl_lineup'] = {}; st.rerun()
+
+    # squad going into the chosen week (before that week's own moves are shown as changes)
+    before_g = W[PG[PG.index(g) - 1]]['squad'] if PG.index(g) > 0 else ids
+    after_g = W[g]['squad']
+    rest = PG[PG.index(g):]; colx = lambda i: sum(P.loc[i, f'xp_{x}'] for x in rest)
+    dd = st.expander('Or pick from lists (handy on a phone)')
+    a_, b_, c_ = dd.columns([1.5, 2.2, 0.8])
+    out_opts = sorted(after_g, key=lambda i: (P.pos[i], colx(i)))
+    o = a_.selectbox(f'Sell (GW{g})', out_opts, index=None, placeholder='Choose a player to sell', key=f'pl_out_{g}',
+                     format_func=lambda i: f'{P.name[i]} ({P.team[i]}, {fe.POS_NAME[P.pos[i]]}) · sells £{sellv(i) / 10:.1f}m')
+    i_ = None
+    if o is not None:
+        money = W[g]['bank'] + sellv(o)
+        cand = P[(P.pos == P.pos[o]) & (P.status != 'u') & ~P.index.isin(after_g)].copy(); cand['v'] = [colx(i) for i in cand.index]
+        cand = cand.sort_values('v', ascending=False).head(150)
+        lab = {i: f'{r["name"]} ({r.team}, £{r.price:.1f}m) · {r.v:.1f} pts over GW{rest[0]}' + (f'-{rest[-1]}' if len(rest) > 1 else '')
+               + ('  · over budget' if round(r.price * 10) > money else '') for i, r in cand.iterrows()}
+        i_ = b_.selectbox(f'Buy · money available £{money / 10:.1f}m', cand.index.tolist(), index=None, placeholder='Choose a replacement',
+                          key=f'pl_in_{g}_{o}', format_func=lambda i: lab[i])
+    else:
+        b_.selectbox('Buy', ['Pick who to sell first'], disabled=True, key='pl_in_blank')
+    c_.write(''); c_.write('')
+    if c_.button('Add', type='primary', use_container_width=True, disabled=i_ is None):
+        st.session_state['pl_moves'] = moves + [dict(gw=g, out=int(o), inn=int(i_))]; st.rerun()
+
+    # ---- your moves, each with an undo
+    if LOCKED or moves:
+        sec('Your changes', ('🔒 confirmed ones are locked · ' if LOCKED else '') + 'click ✕ to undo a planned one')
+        for m in LOCKED:
+            html(f'<div class="move" style="margin:2px 0"><div style="display:flex;align-items:center;gap:10px"><b style="font-family:Outfit;color:#00ff87">GW{m["gw"]}</b>'
+                 f'{move_card(m["out"], "out", PG)}</div><div class="arrow">→</div><div style="display:flex;align-items:center;gap:10px">{move_card(m["inn"], "in", PG)}'
+                 f'<span title="Confirmed in the FPL app" style="font-size:1.3rem">🔒</span></div></div>')
+        for k, m in enumerate(moves):
+            x1, x2 = st.columns([12, 1])
+            x1.markdown(f'<div class="move" style="margin:2px 0"><div style="display:flex;align-items:center;gap:10px"><b style="font-family:Outfit;color:#00ff87">GW{m["gw"]}</b>'
+                        f'{move_card(m["out"], "out", PG[PG.index(m["gw"]):])}</div><div class="arrow">→</div>{move_card(m["inn"], "in", PG[PG.index(m["gw"]):])}</div>', unsafe_allow_html=True)
+            x2.write('')
+            if x2.button('✕', key=f'undo_{k}', help='Undo this change'):
+                st.session_state['pl_moves'] = moves[:k] + moves[k + 1:]; st.rerun()
+    else:
+        html('<div class="note" style="margin:6px 0">No changes yet. Pick a player to sell and a replacement, or start from the suggestion. '
+             'Changes in GW11 carry into GW12 and GW13, just like real transfers.</div>')
+
+    gw1_moves = [m for m in moves if m['gw'] == PG[0]]
+    if gw1_moves and st.button(f'✅ I\'ve made my GW{PG[0]} changes in the FPL app ({len(gw1_moves)})…', key='made_from_planner', type='primary',
+                               help=f'Saves them as your GW{PG[0]} team on every tab. Your later-week plans stay.'):
+        later = [m for m in moves if m['gw'] != PG[0]]
+        confirm_dialog([(int(m['out']), int(m['inn'])) for m in gw1_moves], st.session_state.get('made', []), team, PG[0],
+                       after=lambda: st.session_state.__setitem__('pl_moves', later))
+
+    # ---- totals
+    pts = lambda sq_, gw_: (lambda lu: P.loc[lu[0], f'xp_{gw_}'].sum() + P.loc[lu[1], f'xp_{gw_}'])(lineup(tuple(sorted(sq_)), gw_, BOOST))
+    pts_eff = lambda gw_: (lambda lu: P.loc[lu[0], f'xp_{gw_}'].sum() + P.loc[lu[1], f'xp_{gw_}'])(eff_lineup(gw_, W[gw_]['squad'])[0])
+    gains = {x: pts_eff(x) - pts(ids, x) - fe.HIT * W[x]['hits'] for x in PG}   # vs your GW10 squad, confirmed transfers and their hits included
+    net = sum(gains.values()); hits_tot = sum(W[x]['hits'] for x in PG)
+    colr = ui.GREEN if net > 0.05 else (ui.PINK if net < -0.05 else '#ffffff')
+    html(ui.cards([(f'<span style="color:{colr}">{net:+.1f}</span>', f'points over GW{PG[0]}-{PG[-1]} vs no transfers (after hits)', ''),
+                   (str(len(moves)), 'changes in your plan', 'g'), (f'−{fe.HIT * hits_tot}' if hits_tot else '0', 'hit points', ''),
+                   (f'£{W[PG[-1]]["bank"] / 10:.1f}m', f'bank after GW{PG[-1]}', 'c' if W[PG[-1]]['bank'] >= 0 else '')]))
+    for p_ in problems: st.error(p_)
+
+    # ---- the chosen week: now vs with your changes. Click a shirt on the right to replace him.
+    sec(f'GW{g}: your team now vs with your changes')
+    html('<div class="hint">👆 Click a player\'s name on the right-hand pitch to transfer him, move him to or from the bench, or make him captain</div>')
+    xp = P[f'xp_{g}']
+    orig = team.get('orig_ids', ids); conf = team.get('made', [])
+    lb = lineup(tuple(sorted(orig)), g, BOOST); la, chosen = eff_lineup(g, after_g)
+    pb = xp[lb[0]].sum() + xp[lb[1]]; pa = xp[la[0]].sum() + xp[la[1]]
+    outs = [i for i in orig if i not in after_g]; ins = [i for i in after_g if i not in orig]
+    best_after = lineup(tuple(sorted(after_g)), g, BOOST)
+    moved = [i for i in la[0] if i not in best_after[0]] + [i for i in la[3] if i not in best_after[3]] if chosen else []
+    html(delta_bar(pb, pa, g, fe.HIT * W[g]['hits']))
+    p1, p3 = st.columns(2)
+    with p1:
+        html(f'<div class="ptitle">Your GW{ALL_GWS[0] - 1} team <small>{pb:.1f} pts in GW{g} · best XI</small></div>')
+        click_pitch(lb[0], lb[3], lb[1], lb[2], g, outs=set(outs), clickable=False, tag='now', order=list(orig))
+    with p3:
+        html(f'<div class="ptitle">With your changes <small>{pa:.1f} pts · ' + ('your lineup' if chosen else 'best XI') + (' · includes confirmed' if conf else '') + '</small></div>')
+        clicked = click_pitch(la[0], la[3], la[1], la[2], g, ins=set(ins), moved=set(moved), tag='new', order=list(after_g))
+    html('<div class="note" style="margin-top:4px">Red: going out · green: coming in · cyan: moved by your lineup change. '
+         + ('Your lineup applies to this gameweek only; other weeks use their best XI unless you set them too.' if chosen else 'Until you change it, each week uses its best XI and captain.') + '</div>')
+    if chosen and st.button('Use the best XI again for GW%d' % g, key=f'lu_reset_{g}'):
+        LU.pop(g, None); st.rerun()
+    if clicked is not None:
+        replace_dialog(clicked, g, after_g, W[g]['bank'] + sellv(clicked), PG[PG.index(g):], moves, la)
+
+    # ---- week by week
+    sec('Week by week', 'points that week vs keeping your current team, after hits')
+    rows_ = ''
+    for x in PG:
+        mv = [m for m in allm if m['gw'] == x]
+        txt = ''.join(f'<span class="mv"><img src="{ui.shirt(P.team_code[m["out"]], P.pos[m["out"]] == 1)}"><span><b>{ui.esc(P.name[m["out"]])}</b> → '
+                      f'<b style="color:#00ff87">{ui.esc(P.name[m["inn"]])}</b>{" 🔒" if m.get("locked") else ""}</span></span>' for m in mv) or '<span style="color:#b9a7c2">No changes · the transfer rolls over</span>'
+        w = W[x]; ft_txt = f'{w["ft"]} free · uses {min(w["n"], w["ft"])}' + (f' + <b style="color:#e90052">{w["hits"]} hit (−{fe.HIT * w["hits"]})</b>' if w['hits'] else '')
+        rows_ += (f'<div class="week"><div><div class="gw">GW{x}</div><div class="ft">{ft_txt}</div></div><div>{txt}</div>'
+                  f'<div class="pts" style="color:{ui.GREEN if gains[x] > 0.05 else (ui.PINK if gains[x] < -0.05 else "#b9a7c2")}">{gains[x]:+.1f}</div></div>')
+    html(rows_)
+    if moves and not problems:
+        verdict = 'Worth it.' if net > 1 else ('Marginal: close to a coin flip.' if net > -1 else 'Not worth it.')
+        html(f'<div class="note" style="margin-top:6px"><b style="color:{colr};font-size:1rem">{verdict}</b> Compare with the plan on the Transfers tab to see if the optimiser finds better. '
+             'Wildcard and Free Hit plans are on the Transfers tab.</div>')
+
+# ================================================================== LEAGUE: beat your rivals
+elif page == 'League':
+    c1, c2 = st.columns([2, 1])
+    lid = c1.text_input('Mini-league ID', key='lid', placeholder='e.g. 123456', on_change=remember_save, args=('lid', 'league'),
+                        help='Open the league on the FPL website. The number after /leagues/ in the address is its ID (not the invite code).')
+    if lid.strip(): st.session_state['_lid'] = lid.strip()        # keep it for when you come back from another tab
+    if lid.strip().isdigit() and st.query_params.get('league') != lid.strip(): st.query_params['league'] = lid.strip()
+    mx = c2.select_slider('Managers to analyse', [10, 20, 30, 50], 30, key='lmax', help='The top of the table. More managers take longer to load.')
+    if not lid.strip().isdigit():
+        html('<div class="card" style="padding:18px"><div class="v" style="font-size:1.15rem">Enter your mini-league ID</div><div class="l" style="font-size:.9rem;margin-top:6px">'
+             'See the table, how many rivals own each player, the players that threaten you, the differentials that gain on them, rivals\' chips, and a transfer plan '
+             'aimed at climbing your league. Add your own team ID in the sidebar too, so the app knows which manager is you.</div></div>'); done()
+
+    @st.cache_data(ttl=1800, show_spinner='Loading the league and every rival\'s team...')
+    def get_league(lid_, mx_):
+        return fe.load_league(int(lid_), boot, mx_)
+    try: L = get_league(lid.strip(), mx)
+    except requests.HTTPError: st.error('No classic league found with that ID. Head-to-head leagues are not supported yet.'); done()
+    except Exception as e: st.error(f'Could not load the league ({e}).'); done()
+    me_id = int(st.session_state['eid']) if team is not None and str(st.session_state.get('eid', '')).isdigit() else None
+    M = pd.DataFrame(L['managers'])
+    me = M[M.entry == me_id].iloc[0] if me_id is not None and (M.entry == me_id).any() else None
+    own, capshare, n_riv = fe.league_ownership(L, exclude=me_id)
+    gws_left = len(ALL_GWS)
+    G3 = ALL_GWS[:3]
+    proj = lambda sq_, g: (lambda lu: P.loc[lu[0], f'xp_{g}'].sum() + P.loc[lu[1], f'xp_{g}'])(lineup(tuple(sorted(int(i) for i in sq_ if i in P.index)), g, BOOST))
+    M['next_gw'] = [proj(sq_, G0) for sq_ in M.squad]
+    M['next3'] = [sum(proj(sq_, g) for g in G3) for sq_ in M.squad]
+    if me_id is not None and team is not None and (M.entry == me_id).any():     # your row uses your current team (confirmed transfers, minus any hit)
+        my_now = [int(i) for i in team['squad'].id]; k_ = M.index[M.entry == me_id][0]
+        M.at[k_, 'next_gw'] = proj(my_now, G0) - HIT0; M.at[k_, 'next3'] = sum(proj(my_now, g) for g in G3) - HIT0
+    my_sq = [int(i) for i in team['squad'].id] if team is not None else (list(me.squad) if me is not None else [])
+
+    # ---- headline
+    leader = M.iloc[0]
+    if me is not None:
+        above = M[M['rank'] < me['rank']]
+        gap_lead = leader.total - me.total; gap_up = (above.iloc[-1].total - me.total) if len(above) else 0
+        my_next3 = sum(proj(my_sq, g) for g in G3) - HIT0
+        html(ui.cards([(f'{int(me["rank"])} / {L["n_total"] if not L["has_more"] else str(L["n_total"]) + "+"}', f'your rank in {ui.esc(L["name"])}', 'g'),
+                       ('Leader' if gap_lead == 0 else f'{gap_lead} pts', 'behind the leader' if gap_lead else f'{int(me.total - M.iloc[1].total) if len(M) > 1 else 0} pts clear of 2nd', ''),
+                       (f'{gap_up} pts' if gap_up else '-', 'to the manager above you', ''), (str(gws_left), 'gameweeks left (including this one)', 'c'),
+                       (f'{my_next3 - M[M.entry != me_id].next3.mean():+.1f}', 'your projected GW%d-%d points vs the league average' % (G3[0], G3[-1]), '')]))
+        per_week = gap_lead / max(gws_left, 1)
+        if gap_lead == 0:
+            mood = 'safe'; adv = f'You lead. Protect it: own the players most of your rivals own (they cannot gain on you through them) and captain the popular choice unless the numbers clearly say otherwise.'
+        elif per_week <= 1.5:
+            mood = 'balanced'; adv = f'You are {gap_lead} points behind with {gws_left} gameweeks left, about {per_week:.1f} a week. Very catchable: mostly maximise points, with a differential or two.'
+        else:
+            mood = 'chase'; adv = f'You are {gap_lead} points behind, about {per_week:.1f} a week. You need players your rivals do not have: their points move you up, template points do not.'
+        html(f'<div class="card" style="padding:14px 16px;margin-top:4px"><div class="l" style="font-size:.95rem;color:#fff"><b style="color:#00ff87">Strategy · </b>{adv}</div></div>')
+    else:
+        mood = 'balanced'
+        html(f'<div class="note">Showing <b>{ui.esc(L["name"])}</b>. Enter your own team ID in the sidebar (and make sure you are in this league\'s top {mx}) to see your gaps, threats and a plan.</div>')
+
+    # ---- table
+    ICON = {'Wildcard': '🃏', 'Free Hit': '🎯', 'Bench Boost': '🪑', 'Triple Captain': '👑'}
+    sec('The table', f'top {len(M)} · projections use each manager\'s latest team (rivals\' new transfers stay hidden until the deadline)')
+    body = ''
+    for m in M.itertuples():
+        mv = (m.last_rank or m.rank) - m.rank
+        arrow = f'<span style="color:#00ff87">▲{mv}</span>' if mv > 0 else (f'<span style="color:#e90052">▼{-mv}</span>' if mv < 0 else '<span style="color:#b9a7c2">•</span>')
+        gap = '' if me is None else (f'{m.total - me.total:+d}' if m.entry != me_id else '<b style="color:#00ff87">you</b>')
+        rowst = 'style="outline:1px solid #00ff87"' if m.entry == me_id else ''
+        body += (f'<tr {rowst}><td><b>{m.rank}</b> {arrow}</td><td><b>{ui.esc(m.team)}</b><div class="note">{ui.esc(m.manager)}</div></td><td><b>{m.total}</b></td><td>{gap}</td>'
+                 f'<td>{m.gw_points}</td><td>{ui.esc(P.name.get(m.captain, "-"))}</td><td>{"".join(ICON.get(c, "") for c in m.chips_left) or "-"}</td>'
+                 f'<td><b style="color:#04f5ff">{m.next_gw:.0f}</b></td><td>{m.next3:.0f}</td></tr>')
+    html(f'<table class="fpl"><tr><th>Rank</th><th>Team</th><th>Total</th><th>Gap to you</th><th>GW{L["gw"]}</th><th>GW{L["gw"]} captain</th>'
+         f'<th>Chips left</th><th>Proj. GW{G0}</th><th>Proj. GW{G3[0]}-{G3[-1]}</th></tr>{body}</table>')
+    html('<div class="note" style="margin-top:4px">🃏 Wildcard · 🎯 Free Hit · 🪑 Bench Boost · 👑 Triple Captain still available this half. A rival holding Bench Boost or Triple Captain can jump in a double gameweek.</div>')
+
+    # ---- head to head: your team vs one rival
+    sec('Head to head', 'your team next to any rival\'s, and where the points will differ')
+    rivals = M[M.entry != me_id]
+    if len(rivals) and (my_sq or me is not None):
+        default_r = (M[M['rank'] < me['rank']].iloc[-1].entry if me is not None and (M['rank'] < me['rank']).any() else rivals.iloc[0].entry)
+        opts_r = rivals.entry.tolist()
+        rlab = {m.entry: f'{m.rank}. {m.team} ({m.manager}) · {m.total} pts' for m in rivals.itertuples()}
+        rid = st.selectbox('Compare with', opts_r, index=opts_r.index(default_r), format_func=rlab.get, key='h2h_rival')
+        R_ = M[M.entry == rid].iloc[0]
+        their = [int(i) for i in R_.squad if i in P.index]; mine_ = [int(i) for i in my_sq if i in P.index]
+        shared = set(their) & set(mine_); only_me = [i for i in mine_ if i not in shared]; only_them = [i for i in their if i not in shared]
+        hz_h = st.segmented_control('Projected over', ['Next GW', 'Next 3'], default='Next GW', key='h2h_hz') or 'Next GW'
+        gws_h = ALL_GWS[:1] if hz_h == 'Next GW' else G3
+        tot_me = sum(proj(mine_, g_) for g_ in gws_h) - HIT0; tot_th = sum(proj(their, g_) for g_ in gws_h)
+        ptsx = lambda i: sum(P.loc[i, f'xp_{g_}'] for g_ in gws_h)
+        gap_now = (me.total - R_.total) if me is not None else None
+        html(ui.cards([(f'{len(shared)} / 15', 'players you both own', ''),
+                       (f'{tot_me:.1f} vs {tot_th:.1f}', f'projected points {"GW%d" % G0 if len(gws_h) == 1 else "GW%d-%d" % (G3[0], G3[-1])} (best XI each)', 'c'),
+                       (f'<span style="color:{ui.GREEN if tot_me >= tot_th else ui.PINK}">{tot_me - tot_th:+.1f}</span>', 'expected swing in your favour', ''),
+                       (f'{gap_now:+d}' if gap_now is not None else '-', 'current gap (you minus them)', '')]))
+        g_ = G0; xpg = P[f'xp_{g_}']
+        lm, lt = lineup(tuple(sorted(mine_)), g_, BOOST), lineup(tuple(sorted(their)), g_, BOOST)
+        h1, h2 = st.columns(2)
+        with h1:
+            html(f'<div class="ptitle">You <small>{xpg[lm[0]].sum() + xpg[lm[1]] - HIT0:.1f} pts in GW{g_}' + (f' (after −{HIT0} hit)' if HIT0 else '') + '</small></div>')
+            click_pitch(lm[0], lm[3], lm[1], lm[2], g_, ins=set(only_me), clickable=False, tag='h2hme')
+        with h2:
+            html(f'<div class="ptitle">{ui.esc(R_.team)} <small>{xpg[lt[0]].sum() + xpg[lt[1]]:.1f} pts in GW{g_} · their GW{L["gw"]} squad</small></div>')
+            click_pitch(lt[0], lt[3], lt[1], lt[2], g_, diffs=set(only_them), clickable=False, tag='h2hthem')
+        html('<div class="note" style="margin-top:4px">Green: only you own him · pink: only they own him · white: you both own him (his points cancel out between you). '
+             'Both teams use their best XI and captain for GW%d. Their transfers for GW%d stay hidden until the deadline.</div>' % (g_, G0))
+    else:
+        html('<div class="note">Add your team ID in the sidebar to compare your team with a rival.</div>')
+
+    # ---- ownership: threats and differentials
+    sec('League analysis', 'who your rivals own, and where you can gain or lose ground')
+    O = P[P.status != 'u'].copy(); O['lown'] = own.reindex(O.index).fillna(0); O['lcap'] = capshare.reindex(O.index).fillna(0)
+    ex = lambda lab, f: (lab, f)
+    tA, tB = st.columns(2)
+    with tA:
+        html('<div class="ptitle" style="white-space:nowrap">Threats <small>popular with rivals, not in your team</small></div>')
+        T_ = O[~O.index.isin(my_sq) & (O.lown >= 0.25)].copy(); T_['risk'] = T_.h3 * T_.lown
+        T_ = T_.sort_values('risk', ascending=False).head(8)
+        html(''.join(f'<div class="mv out" style="margin:5px 0"><img src="{ui.shirt(r.team_code, r.pos == 1)}"><div><div class="bigname">{ui.esc(r["name"])} '
+                     f'<span class="note">{r.team}</span></div><div class="m">owned by <b style="color:#fff">{100 * r.lown:.0f}%</b> of rivals · {r.h3:.1f} pts over GW{G3[0]}-{G3[-1]} · '
+                     f'£{r.price:.1f}m</div></div></div>' for _, r in T_.iterrows()) or '<div class="note">No big threats: you own the popular players.</div>')
+    with tB:
+        html('<div class="ptitle" style="white-space:nowrap">League differentials <small>few rivals own them</small></div>')
+        D_ = O[~O.index.isin(my_sq) & (O.lown <= 0.15) & (O.chance.isna() | (O.chance >= 75))].copy(); D_['edge'] = D_.h3 * (1 - D_.lown)
+        D_ = D_.sort_values('edge', ascending=False).head(8)
+        html(''.join(f'<div class="mv in" style="margin:5px 0"><img src="{ui.shirt(r.team_code, r.pos == 1)}"><div><div class="bigname">{ui.esc(r["name"])} '
+                     f'<span class="note">{r.team}</span></div><div class="m">owned by <b style="color:#fff">{100 * r.lown:.0f}%</b> of rivals · {r.h3:.1f} pts over GW{G3[0]}-{G3[-1]} · '
+                     f'£{r.price:.1f}m</div></div></div>' for _, r in D_.iterrows()))
+    if my_sq:
+        sec('Your team vs the league', 'how many rivals own each of your players')
+        mine = O.loc[[i for i in my_sq if i in O.index]].sort_values('lown', ascending=False)
+        html('<table class="fpl"><tr><th>Player</th><th>Owned by rivals</th><th>What it means</th><th>Proj. GW%d-%d</th></tr>' % (G3[0], G3[-1]) +
+             ''.join(f'<tr><td><div class="who"><img src="{ui.shirt(r.team_code, r.pos == 1)}"><b>{ui.esc(r["name"])}</b></div></td>'
+                     f'<td><div class="xpbar" style="min-width:120px"><i style="width:{max(3, 100 * r.lown):.0f}%"></i><span>{100 * r.lown:.0f}%</span></div></td>'
+                     f'<td class="note">{"Shield: his points keep you level" if r.lown >= 0.5 else ("Differential: his points gain you ground" if r.lown <= 0.2 else "Partly shared")}</td>'
+                     f'<td>{r.h3:.1f}</td></tr>' for _, r in mine.iterrows()) + '</table>')
+    cs = capshare.sort_values(ascending=False).head(3)
+    if len(cs):
+        html('<div class="note" style="margin-top:8px"><b style="color:#fff">Last week\'s captains:</b> ' + ' · '.join(f'{ui.esc(P.name.get(i, "?"))} {100 * v:.0f}%' for i, v in cs.items())
+             + '. Captaining the popular choice keeps you level with them; a different captain is a bigger swing either way.</div>')
+
+    # ---- league-mode transfer plan
     if team is not None:
-        mine = [i for i in team['squad'].id if P.selected[i] < own]
-        sec('Your differentials', f'players in your squad owned by under {own}%')
-        html(ui.player_table(P, sorted(mine, key=lambda i: -P.loc[i, col]), ALL_GWS, col) if mine else '<div class="note">None. Your squad is close to the template.</div>')
-    sec('Differential captains', f'GW{G0} · owned by under 20%')
-    C_ = P[(P.status != 'u') & (P.selected < 20) & (P.chance.isna() | (P.chance >= 75))].nlargest(5, f'xp_{G0}')
-    html(ui.player_table(P, C_.index, ALL_GWS, f'xp_{G0}', extra=('As captain', lambda i: f'<b>{2 * P.loc[i, f"xp_{G0}"]:.1f}</b>')))
+        sec('Transfers to climb your league', f'GW{G3[0]}-{G3[-1]} plan')
+        style = st.segmented_control('Approach', ['Safe', 'Balanced', 'Chase'], default={'safe': 'Safe', 'balanced': 'Balanced', 'chase': 'Chase'}[mood], key='lstyle',
+                                     help='Safe: just maximise points. Chase: value points by how few rivals own the player. Balanced: in between.') or 'Balanced'
+        lam = {'Safe': 0.0, 'Balanced': 0.5, 'Chase': 1.0}[style]
+
+        @st.cache_data(show_spinner='Planning...')
+        def league_plan(squad_json, bank, ft, own_items, lam_, gws_, boost):
+            from io import StringIO
+            o = pd.Series(dict(own_items), dtype=float) * lam_
+            return fe.optimise_plan(fe.league_P(P, o, list(gws_)), list(gws_), pd.read_json(StringIO(squad_json)), bank, ft)
+        R = league_plan(team['squad'][['id', 'sell', 'now']].to_json(), team['bank'], team['free_transfers'], tuple(own.items()), lam, tuple(G3), BOOST)
+        rows_ = ''
+        for w in R['weeks']:
+            raw = proj(w['squad'], w['gw']) - proj(my_sq, w['gw'])
+            moves = ''.join(f'<span class="mv"><img src="{ui.shirt(P.team_code[o], P.pos[o] == 1)}"><span><b>{ui.esc(P.name[o])}</b> '
+                            f'<span class="note">({100 * own.get(o, 0):.0f}% own)</span> → <b style="color:#00ff87">{ui.esc(P.name[i])}</b> '
+                            f'<span class="note">({100 * own.get(i, 0):.0f}% own)</span></span></span>' for o, i in pairs(dict(out=w['out'], inn=w['inn']))) or '<span style="color:#b9a7c2">Hold · roll the transfer</span>'
+            rows_ += (f'<div class="week"><div><div class="gw">GW{w["gw"]}</div><div class="ft">{w["ft_before"]} free</div></div><div>{moves}</div>'
+                      f'<div class="pts" style="color:{ui.GREEN if raw > 0.05 else "#b9a7c2"}">{raw:+.1f}</div></div>')
+        html(rows_)
+        html('<div class="note" style="margin-top:6px">Numbers are projected points that week vs keeping your team. In Chase, the plan accepts fewer raw points for players your rivals do not own, '
+             'because those points actually move you up the table. "% own" is the share of your rivals who own him.</div>')
 
 # ================================================================== CHIPS
 elif page == 'Chips':
@@ -458,12 +1069,16 @@ elif page == 'Captain':
     sec('Best captains in the game', f'all players, GW{G0}')
     html(ui.player_table(P, P[P.status != 'u'].nlargest(10, f'xp_{G0}').index, ALL_GWS, f'xp_{G0}'))
 
+    sec('Differential captains', f'GW{G0} · owned by under 20%')
+    C_ = P[(P.status != 'u') & (P.selected < 20) & (P.chance.isna() | (P.chance >= 75))].nlargest(5, f'xp_{G0}')
+    html(ui.player_table(P, C_.index, ALL_GWS, f'xp_{G0}', extra=('As captain', lambda i: f'<b>{2 * P.loc[i, f"xp_{G0}"]:.1f}</b>')))
+
 # ================================================================== PLAYERS
 elif page == 'Players':
     f1, f2, f3 = st.columns([1.3, 1.9, 1])
     pos = f1.pills('Position', ['GK', 'DEF', 'MID', 'FWD'], selection_mode='multi', default=['GK', 'DEF', 'MID', 'FWD'])
     hz = f2.segmented_control('Projected over', list(HORIZONS), default='Next GW', key='hz_pl') or 'Next GW'
-    sort = f3.selectbox('Sort by', ['Projected points', 'Points per £m', 'Goal chance', 'Clean sheet chance', 'Defensive contribution chance', 'Bonus chance', 'Price', 'Ownership', 'Form'])
+    sort = f3.selectbox('Sort by', ['Projected points', 'Edge vs other managers', 'Points per £m', 'Goal chance', 'Clean sheet chance', 'Defensive contribution chance', 'Bonus chance', 'Price', 'Ownership', 'Form'])
     g1, g2, g3, g4, g5 = st.columns([1.5, 1.4, 1, 0.7, 0.9])
     teams = g1.multiselect('Teams', sorted(P.team.unique()), placeholder='All teams')
     lo, hi = g2.slider('Price (£m)', 3.5, 16.0, (3.5, 16.0), 0.5)
@@ -476,7 +1091,7 @@ elif page == 'Players':
     if teams: D = D[D.team.isin(teams)]
     if fit: D = D[D.chance.isna() | (D.chance >= 75)]
     if q: D = D[D.name.str.contains(q, case=False) | D.team.str.contains(q, case=False)]
-    key = {'Projected points': D[col], 'Points per £m': D[col] / D.price, 'Price': D.price, 'Ownership': D.selected, 'Form': D.form,
+    key = {'Projected points': D[col], 'Edge vs other managers': D[col] * (1 - D.selected / 100), 'Points per £m': D[col] / D.price, 'Price': D.price, 'Ownership': D.selected, 'Form': D.form,
            'Goal chance': D[f'p_goal_{G0}'], 'Clean sheet chance': D[f'p_cs_{G0}'].where(D.pos != 4, 0), 'Defensive contribution chance': D[f'p_dc_{G0}'],
            'Bonus chance': D[f'p_bonus_{G0}']}[sort]
     D = D.loc[key.sort_values(ascending=False).index]

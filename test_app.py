@@ -1,4 +1,6 @@
 """Smoke test: every page, with no team, a team ID, a hand-picked team, and the Transfers/Players options."""
+import py_compile
+py_compile.compile("app.py", doraise=True)   # a syntax error must fail the test run, not pass silently
 from streamlit.testing.v1 import AppTest
 import pandas as pd
 P = pd.read_parquet('data/predictions.parquet'); c0 = [c for c in P.columns if c.startswith('xp_')][0]
@@ -8,13 +10,23 @@ for p, n in {1: 2, 2: 5, 3: 5, 4: 3}.items():
     for i in P[(P.pos == p) & (P.status == 'a')].sort_values(c0, ascending=False).index:
         if P.team_id[i] not in used: pick[p].append(int(i)); used.add(P.team_id[i])
         if len(pick[p]) == n: break
+import json as _j, fpl_engine as _fe
+TEAM1 = tuple(sorted(int(i) for i in _fe.load_entry(1, _j.load(open('data/2026-27/bootstrap.json')))['squad'].id))
 CASES = []
-for page in ['My team', 'Transfers', 'Planner', 'Captain', 'Chips', 'Differentials', 'Compare', 'Players', 'Fixtures', 'How it works']:
+for page in ['My team', 'Transfers', 'Planner', 'Captain', 'Chips', 'League', 'Compare', 'Players', 'Fixtures', 'How it works']:
     for setup in ('none', 'id', 'manual'): CASES.append((page, setup, {}))
-CASES += [('Transfers', 'manual', {'chip': 'Wildcard'}), ('Transfers', 'manual', {'chip': 'Free Hit'}), ('Transfers', 'id', {'plan': '1 GW'}),
-          ('Players', 'none', {'hz_pl': 'Season'}), ('Differentials', 'id', {'hz_dif': 'Season', 'own_dif': 5}), ('My team', 'id', {'boost': 30}), ('Compare', 'none', {'cmp': [411, 379, 1, 4], 'cmp_gw': 'GW12'}), ('Compare', 'none', {'cmp': []}), ('Fixtures', 'none', {'tf_sort': 'Defence (xG against)'}), ('Compare', 'none', {'cmp': [202, 60, 411]}),
-          ('Planner', 'id', {'sell': [569], 'buy_569': 79}), ('Planner', 'id', {'sell': [569, 8], 'buy_569': 79, 'buy_8': 112, 'hz_plan': 'Next GW'}),
-          ('Planner', 'id', {'sell': [569, 8, 566], 'buy_569': 379, 'buy_8': 112, 'buy_566': 4}), ('Planner', 'id', {'sell': [569]}), ('Players', 'none', {'hz_pl': 'Next 6'}), ('My team', 'id', {'hz_team': 'Next 3'})]
+CASES += [('Transfers', 'manual', {'chip': 'Wildcard'}), ('Transfers', 'manual', {'chip': 'Free Hit'}), ('Transfers', 'id', {'plan': '1 GW'}), ('Transfers', 'id', {'hits': True}), ('Transfers', 'manual', {'chip': 'Wildcard', 'plan': '2 GWs'}),
+          ('Players', 'none', {'hz_pl': 'Season'}), ('My team', 'id', {'boost': 30}), ('Compare', 'none', {'cmp': [411, 379, 1, 4], 'cmp_gw': 'GW12'}), ('Compare', 'none', {'cmp': []}), ('Fixtures', 'none', {'tf_sort': 'Defence (xG against)'}), ('League', 'id', {'lid': '5508'}),
+          ('My team', 'id', {'made': [(569, 79)], '_made_for': '1'}), ('Transfers', 'id', {'made': [(569, 79), (8, 112)], '_made_for': '1'}),
+          ('Planner', 'id', {'made': [(569, 79)], '_made_for': '1'}), ('My team', 'id', {'made': [(569, 411)], '_made_for': '1'}), ('My team', 'id', {'made': [(569, 379), (8, 4)], '_made_for': '1'}), ('League', 'id', {'lid': '5508', 'h2h_hz': 'Next 3'}), ('League', 'none', {'lid': '5508'}), ('League', 'id', {'lid': '1757', 'lstyle': 'Chase'}), ('League', 'id', {'lid': '999999999'}),
+          ('Planner', 'id', {'pl_team': ('Solio Moose', TEAM1), 'pl_moves': [dict(gw=11, out=569, inn=79)]}),
+          ('Planner', 'id', {'pl_team': ('Solio Moose', TEAM1), 'pl_moves': [dict(gw=11, out=569, inn=79), dict(gw=12, out=8, inn=112), dict(gw=12, out=566, inn=4)], 'pl_gw': 'GW12'}),
+          ('Planner', 'id', {'pl_team': ('Solio Moose', TEAM1), 'pl_moves': [dict(gw=11, out=569, inn=411)]}),
+          ('Planner', 'id', {'pl_team': ('Solio Moose', TEAM1), 'pl_moves': [dict(gw=12, out=79, inn=379)]}),
+          ('Planner', 'id', {'pl_team': ('Solio Moose', TEAM1), 'pl_moves': [], 'pl_lineup': {11: dict(bench=[302, 166, 277, 173], cap=154, vice=411)}}),
+          ('Planner', 'id', {'pl_team': ('Solio Moose', TEAM1), 'pl_moves': [dict(gw=11, out=166, inn=79)], 'pl_lineup': {11: dict(bench=[302, 166, 277, 173], cap=411, vice=154)}}),
+          ('Transfers', 'id', {'plan': '2 GWs'}), ('Compare', 'none', {'cmp': [202, 60, 411]}),
+           ('Players', 'none', {'hz_pl': 'Next 6'}), ('My team', 'id', {'hz_team': 'Next 3'})]
 fails = 0
 for page, setup, extra in CASES:
     at = AppTest.from_file('app.py', default_timeout=240)
@@ -25,8 +37,10 @@ for page, setup, extra in CASES:
         for p, ids in pick.items(): at.session_state[f'pk{p}'] = ids
     for k, v in extra.items(): at.session_state[k] = v
     at.run()
-    ex = list(at.exception); fails += bool(ex)
+    ex = list(at.exception)
+    if not at.markdown: ex = ex or ['page rendered nothing']   # an empty page means the script never ran
+    fails += bool(ex)
     shown = sum('class="mv in"' in m.value for m in at.markdown) + sum('Hold. Keep your team' in m.value for m in at.markdown)
-    if page == 'Planner' and 'sell' in extra: print('   verdict cards:', [e.value for e in at.error], [m.value[:90] for m in at.markdown if 'net points' in m.value][:1])
+    if page == 'Planner' and 'pl_moves' in extra: print('   errors:', [e.value for e in at.error], '| moves kept:', len(at.session_state['pl_moves']))
     print(f'{page:13s} {setup:7s} {str(extra):28s} {"FAIL " + str(ex[0].value)[:400] if ex else "ok"}' + (f' | transfer cards {shown}' if page == 'Transfers' and setup != 'none' else ''))
 print('failures:', fails)
