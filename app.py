@@ -175,6 +175,15 @@ def load_made(tid_):
     return [tuple(int(x) for x in p_.split('-')) for p_ in pairs_.split(',') if '-' in p_]
 
 
+def club_over(team_, new):
+    """Clubs with more than 3 players in your squad after these transfers (FPL allows at most 3 per club): {club: count}."""
+    ids_ = [int(i) for i in team_['squad'].id]
+    for o, i in new:
+        if o in ids_: ids_[ids_.index(o)] = i
+    c = pd.Series([P.team[i] for i in ids_ if i in P.index]).value_counts()
+    return c[c > 3].to_dict()
+
+
 def bank_after(team_, new):
     """Bank after these transfers, from your current team (selling prices for players you own, today's price for players bought)."""
     sellp = team_['squad'].set_index('id').sell; bank = team_['bank']
@@ -201,6 +210,11 @@ def confirm_block(new, made_now, team_, gw, after=None, key='cf'):
              + '</div></div>')
     else:
         html(f'<div class="note" style="margin:6px 0">Bank afterwards: <b style="color:#00ff87">£{bk / 10:.1f}m</b></div>')
+    over = club_over(team_, new)
+    if over:
+        html(f'<div class="card" style="padding:12px 14px;border-color:#e90052;margin:8px 0"><div class="v" style="color:#e90052;font-size:1.2rem">'
+             + ', '.join(f'{n_} players from {c_}' for c_, n_ in over.items()) + '</div><div class="l" style="font-size:.88rem">FPL allows at most 3 players from one club, '
+             'so these transfers cannot be confirmed. Go back and change one, or add a transfer that sells one of them.</div></div>')
     if hits:
         html(f'<div class="card" style="padding:12px 14px;border-color:#e90052;margin:8px 0"><div class="v" style="color:#e90052;font-size:1.2rem">−{fe.HIT * hits} points</div>'
              f'<div class="l" style="font-size:.88rem">You have {ft_left} free transfer{"s" if ft_left != 1 else ""} left, so {hits} of these cost{"s" if hits == 1 else ""} a 4-point hit. '
@@ -210,7 +224,7 @@ def confirm_block(new, made_now, team_, gw, after=None, key='cf'):
     html('<div class="note" style="margin:6px 0 10px 0">⚠️ <b style="color:#fff">This cannot be undone here</b>, just like a confirmed transfer in FPL. '
          'Not sure yet? Try it in the <b>Planner</b> first: you can change your mind there as often as you like.</div>')
     a, b = st.columns(2)
-    if a.button('Yes, confirm', type='primary', use_container_width=True, key=f'{key}_yes', disabled=bk < 0):
+    if a.button('Yes, confirm', type='primary', use_container_width=True, key=f'{key}_yes', disabled=bk < 0 or bool(over)):
         set_made(made_now + list(new))
         if after: after()
         st.rerun()
@@ -234,6 +248,8 @@ def made_dialog(team_, made_now, gw):
         html(f'<div class="note" style="margin-bottom:4px"><b style="color:#fff">Your transfers so far ({len(bk)})</b> · bank after them '
              + (f'<b style="color:#00ff87">£{bnow / 10:.1f}m</b>' if bnow >= 0 else
                 f'<b style="color:#e90052">−£{-bnow / 10:.1f}m</b>: over budget. Add or change a transfer to free up £{-bnow / 10:.1f}m before you confirm.') + '</div>')
+        for c_, n_ in club_over(team_, bk).items():
+            html(f'<div class="note" style="margin-bottom:4px;color:#e90052"><b>{n_} players from {c_}</b>: FPL allows 3. Sell one of them before you confirm.</div>')
         for k, (a_, b_) in enumerate(bk):
             r1, r2 = st.columns([6, 1.2], vertical_alignment='center')
             r1.markdown(f'<div class="move" style="margin:2px 0">{card(a_, "out")}<div class="arrow">→</div>{card(b_, "in")}</div>', unsafe_allow_html=True)
@@ -277,13 +293,17 @@ def made_dialog(team_, made_now, gw):
     if q: cand = cand[cand.name.str.contains(q, case=False)]
     cand = cand.sort_values(['selected', 'price'], ascending=False)        # most-owned first: the players people usually buy
     n = S.get('md_n', 12)
+    # how many you would have from each club after this transfer (the player you sold no longer counts)
+    club_n = pd.Series([P.team[x] for x in now_ids if x != o and x in P.index]).value_counts()
     for i, r_ in cand.head(n).iterrows():
         a, b = st.columns([6, 1.3])
         short = round(r_.price * 10) - money
+        n_club = int(club_n.get(r_.team, 0)) + 1
         # any player can be picked: only the total of all your transfers has to fit the budget (checked when you confirm)
         a.markdown(f'<div class="mv in" style="padding:5px 10px"><img src="{ui.shirt(r_.team_code, r_.pos == 1)}"><div><div class="bigname">{ui.esc(r_["name"])} '
                    f'<span class="note">{r_.team}</span></div><div class="m">£{r_.price:.1f}m · owned {r_.selected:.0f}%'
                    + (f' · <span style="color:#ffab1b">£{short / 10:.1f}m more than you have now: other transfers must free it up</span>' if short > 0 else '')
+                   + (f' · <span style="color:#ffab1b">your {n_club}th from {r_.team}: FPL allows 3, so sell one of them too</span>' if n_club > 3 else '')
                    + '</div></div></div>', unsafe_allow_html=True)
         if b.button('Transfer', key=f'md_i_{i}', type='primary', use_container_width=True):
             S['md_basket'] = [list(p_) for p_ in rest] + [[int(orig), int(i)]]; S['md_out'] = None; S['md_n'] = 12; st.rerun(scope='fragment')
