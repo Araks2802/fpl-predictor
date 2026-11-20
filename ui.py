@@ -100,6 +100,17 @@ footer {visibility: hidden;}
 [class*="st-key-ppin_"] button {background: #00ff87;} [class*="st-key-ppmv_"] button {background: #04f5ff;}
 [class*="st-key-pp"] button:hover {background: #ebff00; color: #1b0021; outline: 2px solid #ebff00;}
 [class*="st-key-pp"] button:focus:not(:hover), [class*="st-key-pp"] button:active:not(:hover) {color: #37003c; box-shadow: none;}
+/* click a player for his last 5 games, or a team's results for the scores */
+details.pd > summary, details.res5 > summary {list-style: none; cursor: pointer;} details.pd > summary::-webkit-details-marker, details.res5 > summary::-webkit-details-marker {display: none;}
+.pd-hint {color: #04f5ff; font-weight: 600; white-space: nowrap;} details.pd[open] .pd-hint {color: #00ff87;}
+.pd-card {position: absolute; left: 6px; top: calc(100% - 4px); z-index: 50; width: 520px; max-width: calc(100vw - 48px); background: #2a0631; border: 1px solid #00ff87;
+  border-radius: 12px; padding: 10px 12px; box-shadow: 0 12px 30px rgba(0,0,0,.55); font-size: .8rem;}
+.pd-card {overflow-x: auto;}
+.pd-card table {width: 100%; border-collapse: collapse;} .pd-card td, .pd-card th {background: none !important; padding: 4px 4px !important; border: none !important; text-align: left;}
+.pd-card th {color: #b9a7c2; font-weight: 500; font-size: .7rem; text-transform: uppercase;} .pd-card tr + tr td {border-top: 1px solid rgba(255,255,255,.08) !important;}
+.pd-card .how {color: #e6d9ec; font-size: .74rem;} .pd-card .tot {font-family: 'Outfit'; font-weight: 800; color: #00ff87; font-size: .95rem; text-align: right;}
+details.res5 .res5-list {margin-top: 6px; font-size: .78rem; line-height: 1.6; color: #e6d9ec;} details.res5 .res5-list b {color: #fff;}
+.res5-hint {color: #04f5ff; font-size: .7rem; font-weight: 600; margin-left: 4px;}
 /* the team ID box in the sidebar: green, like the selected buttons */
 .st-key-eid label {display: inline-flex; align-items: center; gap: 8px; width: auto; background: rgba(0,255,135,.1); border: 1px solid #00ff87; border-radius: 8px; padding: 3px 10px; margin-bottom: 6px;}
 .st-key-eid label p {color: #00ff87 !important; font-weight: 600;}
@@ -217,8 +228,9 @@ def chances(r, g):
     return '<div class="chn">' + ' · '.join(attack) + '</div>' + ('<div class="chn">' + ' · '.join(defend) + '</div>' if defend else '')
 
 
-def player_table(P, ids, gws, value_col, max_val=None, extra=None, show_fix=4):
-    """HTML player list with shirts, fixture chips, next-gameweek chances and an expected-points bar."""
+def player_table(P, ids, gws, value_col, max_val=None, extra=None, show_fix=4, detail=None):
+    """HTML player list with shirts, fixture chips, next-gameweek chances and an expected-points bar.
+    detail: optional {id: html} shown in a card when the player's name is clicked (e.g. his last 5 games)."""
     max_val = max_val or max(P.loc[ids, value_col].max(), 1)
     head = (f'<tr><th>Player</th><th>Price</th><th>Owned</th><th>Form</th><th>Next fixtures</th><th>GW{gws[0]} chances</th><th>Projected</th><th>Pts / £m</th>'
             + (f'<th>{extra[0]}</th>' if extra else '') + '</tr>')
@@ -228,8 +240,12 @@ def player_table(P, ids, gws, value_col, max_val=None, extra=None, show_fix=4):
         fx = ''.join(fx_chip(r[f'opp_{g}'].split(',')[0].strip() + (' +1' if ',' in r[f'opp_{g}'] else ''), r[f'fdr_{g}']) for g in gws[:show_fix])
         w = max(0, min(100, 100 * r[value_col] / max_val))
         news = f'<div class="t" style="color:#ffab1b">{esc(r.news)}</div>' if isinstance(r.news, str) and r.news else ''
-        body += (f'<tr><td><div class="who"><img src="{shirt(r.team_code, r.pos == 1)}"><div><b>{esc(r["name"])}</b>'
-                 f'<span class="pos" style="background:{POS_COL[r.pos]}">{POS[r.pos]}</span><div class="t">{esc(r.team)}</div>{news}</div></div></td>'
+        who = (f'<div class="who"><img src="{shirt(r.team_code, r.pos == 1)}"><div><b>{esc(r["name"])}</b>'
+               f'<span class="pos" style="background:{POS_COL[r.pos]}">{POS[r.pos]}</span><div class="t">{esc(r.team)}'
+               + (' · <span class="pd-hint">last 5 ▾</span>' if detail and i in detail else '') + f'</div>{news}</div></div>')
+        if detail and i in detail:
+            who = f'<details class="pd"><summary>{who}</summary><div class="pd-card">{detail[i]}</div></details>'
+        body += (f'<tr><td style="position:relative">{who}</td>'
                  f'<td>£{r.price:.1f}m</td><td>{r.selected:.1f}%</td><td>{r.form:.1f}</td><td class="fxs">{fx}</td><td>{chances(r, gws[0])}</td>'
                  f'<td><div class="xpbar"><i style="width:{w:.0f}%"></i><span>{r[value_col]:.1f}</span></div></td><td>{r[value_col] / r.price:.2f}</td>'
                  + (f'<td>{extra[1](i)}</td>' if extra else '') + '</tr>')

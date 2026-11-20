@@ -1,5 +1,5 @@
 """Download the four past seasons from the vaastav/Fantasy-Premier-League archive (skips files already present).
-They are only needed for training, so they are not stored in the git repo."""
+Training and every prediction run need them (form and last season's level carry over), but they are not stored in the git repo."""
 import requests
 from pathlib import Path
 D = Path(__file__).parent / 'data'

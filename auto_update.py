@@ -62,8 +62,9 @@ if dry or action is None:
     for f, b in backup.items(): (CUR / f).write_bytes(b)   # leave the files exactly as they were
     sys.exit(0)
 
+run('fetch_history.py')          # past seasons are not in the repo, and the predictions need them too (form carries over seasons). Skips files already present.
 if action == 'weekly retrain':
-    run('fetch_current.py'); run('fetch_history.py'); run('train_mlp.py'); run('train_events.py')
+    run('fetch_current.py'); run('train_mlp.py'); run('train_events.py')
     log['last_full_gw'] = last_done
 run('make_predictions.py')
 log.update(updated_at=now().isoformat(timespec='minutes'), update_type=action, next_gw=nxt['id'] if nxt else None)

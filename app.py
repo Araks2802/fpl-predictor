@@ -6,6 +6,8 @@ The app only reads data/predictions.parquet, data/meta.json and data/2026-27/boo
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
+UK = ZoneInfo('Europe/London')           # deadlines shown in UK time (GMT in winter, BST in summer)
 import numpy as np, pandas as pd, plotly.graph_objects as go, requests, streamlit as st
 import fpl_engine as fe, ui
 try:                                     # browser storage: remembers your team, league and confirmed transfers between visits
@@ -51,6 +53,37 @@ def season_stats():
     S['ppg'] = S.pts / S.apps.where(S.apps > 0); S['saves90'] = 90 * S.saves / S.minutes.where(S.minutes >= 90)
     S['cards'] = S.yc.astype(int).astype(str) + ' / ' + S.rc.astype(int).astype(str)
     return S
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def last5_cards():
+    """{player id: html} with his last 5 matches: opponent, minutes and how he got his points, using FPL's scoring for his position."""
+    H = pd.read_csv(ROOT / 'data' / '2026-27' / 'history.csv', low_memory=False).sort_values('kickoff_time')
+    sc = boot['game_config']['scoring']; pk = {1: 'GKP', 2: 'DEF', 3: 'MID', 4: 'FWD'}
+    sn = {t['id']: t['short_name'] for t in boot['teams']}
+    out = {}
+    for i, g in H.groupby('element'):
+        if i not in P.index: continue
+        p_ = int(P.pos[i]); k = pk[p_]; rows = ''
+        for r in g.tail(5).iloc[::-1].itertuples():
+            m = int(r.minutes); parts = []
+            if m > 0: parts.append(('played', sc['long_play'] if m >= 60 else sc['short_play']))
+            parts += [('goal' + ('s' if r.goals_scored > 1 else ''), r.goals_scored * sc['goals_scored'][k]), ('assist' + ('s' if r.assists > 1 else ''), r.assists * sc['assists']),
+                      ('clean sheet', r.clean_sheets * sc['clean_sheets'][k]), ('saves', (r.saves // 3) * sc['saves']),
+                      ('pen saved', r.penalties_saved * sc['penalties_saved']), ('conceded', (r.goals_conceded // 2) * sc['goals_conceded'][k]),
+                      ('def. contribution', sc['defensive_contribution'][k] if p_ != 1 and pd.notna(r.defensive_contribution)
+                       and r.defensive_contribution >= {2: 10, 3: 12, 4: 12}[p_] else 0),
+                      ('bonus', r.bonus * sc['bonus']), ('yellow', r.yellow_cards * sc['yellow_cards']), ('red', r.red_cards * sc['red_cards']),
+                      ('own goal', r.own_goals * sc['own_goals']), ('pen missed', r.penalties_missed * sc['penalties_missed'])]
+            parts = [(n_, int(v)) for n_, v in parts if v]
+            other = int(r.total_points) - sum(v for _, v in parts)
+            if other: parts.append(('other', other))
+            how = ' · '.join(f'{n_} {v:+d}' if v < 0 else f'{n_} {v}' for n_, v in parts) or 'did not play'
+            gf, ga = (r.team_h_score, r.team_a_score) if r.was_home else (r.team_a_score, r.team_h_score)
+            rows += (f'<tr><td>GW{r.round}</td><td style="white-space:nowrap">{sn.get(r.opponent_team, "?")} ({"H" if r.was_home else "A"}) {gf:.0f}-{ga:.0f}</td>'
+                     f'<td>{m}\'</td><td class="how">{how}</td><td class="tot">{int(r.total_points)}</td></tr>')
+        out[int(i)] = f'<table><tr><th>GW</th><th>Match</th><th>Mins</th><th>How he scored</th><th style="text-align:right">Pts</th></tr>{rows}</table>'
+    return out
 
 
 @st.cache_data(ttl=600, show_spinner='Loading your team from FPL...')
@@ -366,8 +399,8 @@ updated_pill = (f'<span class="pill">Updated {_ago(meta["updated_at"])}' + (' ·
 sub = (f"{team['manager']} · {team['points']} pts · rank {team['rank']:,}" if team and team.get('rank') else 'Projected points, best XI, captain and transfers for the coming gameweek')
 html(f'<div class="hero"><div class="hero-title">{ui.esc(team["name"]) if team else "Your FPL team,"} <span>{"GW" + str(G0) if team else "projected."}</span></div>'
      f'<div class="hero-sub">{ui.esc(sub)}</div>'
-     f'<span class="pill g">GW{G0} · {deadline:%a %d %b %H:%M} UTC</span><span class="pill">Deadline in {countdown}</span>{updated_pill}</div>')
-page = st.segmented_control('Page', ['My team', 'Transfers', 'Planner', 'Captain', 'Chips', 'League', 'Compare', 'Players', 'Fixtures', 'Review', 'How it works'], default='My team', label_visibility='collapsed', key='nav') or 'My team'
+     f'<span class="pill g">GW{G0} · {deadline.astimezone(UK):%a %d %b %H:%M} UK time</span><span class="pill">Deadline in {countdown}</span>{updated_pill}</div>')
+page = st.segmented_control('Page', ['My team', 'Transfers', 'Planner', 'Captain', 'Chips', 'League', 'Compare', 'Players', 'Teams', 'Review', 'How it works'], default='My team', label_visibility='collapsed', key='nav') or 'My team'
 
 
 def done():
@@ -538,7 +571,7 @@ if page == 'My team':
         st.plotly_chart(html_fig, use_container_width=True, config={'displayModeBar': False})
         sec('Your fixtures', 'official difficulty: green easy, red hard')
         order = sorted(ids, key=lambda i: (P.pos[i], -xp[i]))
-        html(ui.ticker([(ui.esc(P.name[i]), [(P.loc[i, f'opp_{g}'].split(',')[0].replace(' (H)', ' H').replace(' (A)', ' a') + ('+' if ',' in P.loc[i, f'opp_{g}'] else ''), P.loc[i, f'fdr_{g}']) for g in gs]) for i in order], gs))
+        html(ui.ticker([(ui.esc(P.name[i]), [(P.loc[i, f'opp_{g}'].split(',')[0].replace(' (H)', ' H').replace(' (A)', ' A') + ('+' if ',' in P.loc[i, f'opp_{g}'] else ''), P.loc[i, f'fdr_{g}']) for g in gs]) for i in order], gs))
     sec('Squad projections')
     hz = st.segmented_control('Horizon', ['Next GW', 'Next 3'], default='Next GW', key='hz_team', label_visibility='collapsed') or 'Next GW'
     col = f'h{HORIZONS[hz]}'
@@ -1155,35 +1188,82 @@ elif page == 'Players':
            'Bonus chance': D[f'p_bonus_{G0}']}[sort]
     D = D.loc[key.sort_values(ascending=False).index]
     sec(f'{len(D)} players', f'projected points over {hz.lower()} · bars scaled to the best shown')
-    html(ui.player_table(P, D.index[:n], ALL_GWS, col, max_val=D[col].max() if len(D) else 1))
-    html('<div class="note" style="margin-top:6px">Want two players side by side? Open the <b>Compare</b> tab.</div>')
+    html(ui.player_table(P, D.index[:n], ALL_GWS, col, max_val=D[col].max() if len(D) else 1, detail=last5_cards()))
+    # a click anywhere outside an open 'last 5' card closes it (so only one is open at a time). Page text cannot run scripts,
+    # so this tiny invisible component adds one click listener to the page, once.
+    import streamlit.components.v1 as components
+    components.html("""<script>
+      const d = window.parent.document;
+      if (!d.__pdClose) { d.__pdClose = true;
+        d.addEventListener('click', e => d.querySelectorAll('details.pd[open]').forEach(x => { if (!x.contains(e.target)) x.removeAttribute('open'); }), true); }
+    </script>""", height=0)
+    html('<div class="note" style="margin-top:6px">Click a player to see his last 5 games and how he got his points (click again to close). '
+         'Want two players side by side? Open the <b>Compare</b> tab.</div>')
 
-# ================================================================== FIXTURES
-elif page == 'Fixtures':
-    n = st.segmented_control('Gameweeks', ['Next 4', 'Next 6', 'Next 8'], default='Next 6', label_visibility='collapsed') or 'Next 6'
+# ================================================================== TEAMS: league table, recent results and team stats, then the fixture ticker
+elif page == 'Teams':
+    @st.cache_data(ttl=3600, show_spinner=False)
+    def team_season():
+        """This season's results per team from the fixture list: the table, the last 5 results and clean sheets."""
+        fx = json.load(open(ROOT / 'data' / '2026-27' / 'fixtures.json'))
+        sn = {t['id']: t['short_name'] for t in boot['teams']}
+        rows = []
+        for f in fx:
+            if not f['finished'] or f['team_h_score'] is None: continue
+            for side, tid, oid, gf, ga in (('H', f['team_h'], f['team_a'], f['team_h_score'], f['team_a_score']), ('A', f['team_a'], f['team_h'], f['team_a_score'], f['team_h_score'])):
+                rows.append(dict(team=sn[tid], opp=sn[oid], ha=side, gf=gf, ga=ga, ko=f['kickoff_time'], gw=f['event'],
+                                 res='W' if gf > ga else ('D' if gf == ga else 'L')))
+        R = pd.DataFrame(rows).sort_values('ko')
+        g = R.groupby('team')
+        S = pd.DataFrame({'p': g.size(), 'w': g.res.apply(lambda x: (x == 'W').sum()), 'd': g.res.apply(lambda x: (x == 'D').sum()),
+                          'l': g.res.apply(lambda x: (x == 'L').sum()), 'gf': g.gf.sum(), 'ga': g.ga.sum(), 'cs': g.ga.apply(lambda x: (x == 0).sum())})
+        S['gd'] = S.gf - S.ga; S['pts'] = 3 * S.w + S.d
+        S = S.sort_values(['pts', 'gd', 'gf'], ascending=False); S['rank'] = range(1, len(S) + 1)
+        S['last5'] = g.apply(lambda d: d.tail(5)[['res', 'opp', 'ha', 'gf', 'ga', 'gw']].to_dict('records')).reindex(S.index)
+        S['form5'] = g.apply(lambda d: (d.tail(5).res.map({'W': 3, 'D': 1, 'L': 0})).sum()).reindex(S.index)
+        return S
+
+    S = team_season()
+    TF = P.groupby('team').agg(code=('team_code', 'first'), xgf=('own_xgf', 'first'), xga=('own_xga', 'first'), cs_next=('p_team_cs', 'first'), opp=(f'opp_{G0}', 'first'))
+    S = S.join(TF, how='left')
+    sec('Teams', f'this season so far, before GW{G0}')
+    sort = st.segmented_control('Sort teams by', ['League table', 'Form (last 5)', 'Attack (xG for)', 'Defence (xG against)', f'GW{G0} clean sheet chance'],
+                                default='League table', key='tf_sort') or 'League table'
+    key = {'League table': ('rank', True), 'Form (last 5)': ('form5', False), 'Attack (xG for)': ('xgf', False), 'Defence (xG against)': ('xga', True),
+           f'GW{G0} clean sheet chance': ('cs_next', False)}[sort]
+    S = S.sort_values([key[0], 'rank'], ascending=[key[1], True])
+    RC = {'W': ('#00ff87', '#1b0021'), 'D': ('#b9a7c2', '#1b0021'), 'L': ('#e90052', '#ffffff')}
+    chip = lambda r: (f'<span title="GW{r["gw"]}: {r["opp"]} ({r["ha"]}) {r["gf"]}-{r["ga"]}" style="display:inline-block;width:22px;height:22px;line-height:22px;margin:1px;'
+                      f'border-radius:5px;text-align:center;font-weight:800;font-size:.72rem;background:{RC[r["res"]][0]};color:{RC[r["res"]][1]}">{r["res"]}</span>')
+    res_line = lambda r: (f'GW{r["gw"]} · <b style="color:{RC[r["res"]][0]}">{r["res"]}</b> <b>{r["gf"]}-{r["ga"]}</b> '
+                          f'{"vs" if r["ha"] == "H" else "at"} {r["opp"]}')
+    bar = lambda v, mx, good=True: (f'<div class="xpbar" style="min-width:80px"><i style="width:{max(4, min(100, 100 * v / mx)):.0f}%;'
+                                    f'{"" if good else "background:linear-gradient(90deg,#ff1751,#e90052)"}"></i><span>{v:.2f}</span></div>')
+    body = ''.join(
+        f'<tr><td>{r["rank"]}</td><td style="white-space:nowrap"><img src="{ui.shirt(r.code)}" style="width:26px;vertical-align:middle;margin-right:8px"><b>{tm}</b></td>'
+        f'<td>{r.w}-{r.d}-{r.l}</td><td style="white-space:nowrap">{r.gf}-{r.ga} ({r.gd:+d})</td><td><b>{r.pts}</b></td>'
+        f'<td style="white-space:nowrap"><details class="res5"><summary>{"".join(chip(x) for x in r.last5)}<span class="res5-hint">▾</span></summary>'
+        f'<div class="res5-list">{"<br>".join(res_line(x) for x in reversed(r.last5))}</div></details></td>'
+        f'<td>{bar(r.xgf, 2.6)}</td><td>{bar(r.xga, 2.6, False)}</td><td>{r.cs}</td><td style="white-space:nowrap">{ui.esc(r.opp)}</td>'
+        f'<td><b style="color:{ui.GREEN}">{100 * r.cs_next:.0f}%</b></td></tr>' for tm, r in S.iterrows())
+    html(f'<div style="overflow-x:auto"><table class="fpl" style="min-width:940px"><tr><th>#</th><th>Team</th><th>W-D-L</th><th>Goals (GD)</th><th>Pts</th><th>Last 5</th>'
+         f'<th>xG for</th><th>xG against</th><th>Clean sheets</th><th>GW{G0}</th><th>CS chance</th></tr>{body}</table></div>')
+    html(f'<div class="note" style="margin-top:6px">{S.p.max()} games played. Last 5 runs oldest to newest: click the results to see the scores (newest first). xG for and against are per game over the last 10 games, '
+         f'pulled a little towards the league average. CS chance is the chance of a clean sheet in GW{G0}. '
+         'All of these feed the model, so a team in good form or with a tight defence already lifts its players\' projections.</div>')
+
+    # ---- fixture ticker, easiest run first
+    sec('Fixture ticker', 'sorted easiest first · official difficulty, 1 easy to 5 hard · H home, A away, + double')
+    n = st.segmented_control('Gameweeks', ['Next 4', 'Next 6', 'Next 8'], default='Next 6', key='tk_n', label_visibility='collapsed') or 'Next 6'
     gs = ALL_GWS[:int(n.split()[1])]
     T = P.groupby('team').first()
     rows = []
     for tm, r in T.iterrows():
-        cells = [(r[f'opp_{g}'].split(',')[0].replace(' (H)', ' H').replace(' (A)', ' a') + ('+' if ',' in r[f'opp_{g}'] else ''), r[f'fdr_{g}']) for g in gs]
+        cells = [(r[f'opp_{g}'].split(',')[0].replace(' (H)', ' H').replace(' (A)', ' A') + ('+' if ',' in r[f'opp_{g}'] else ''), r[f'fdr_{g}']) for g in gs]
         diff = np.mean([f if f else 5.5 for _, f in cells])
         rows.append((diff, f'<img src="{ui.shirt(r.team_code)}" style="width:22px;vertical-align:middle;margin-right:6px">{tm}', cells))
     rows.sort(key=lambda x: x[0])
-    sec('Fixture ticker', 'sorted easiest first · official difficulty, 1 easy to 5 hard · H home, a away, + double')
     html(ui.ticker([(lab, cells) for _, lab, cells in rows], gs))
-    sec('Team form', 'what the model knows about each club before GW%d' % G0)
-    TF = P.groupby('team').agg(code=('team_code', 'first'), form=('own_form5', 'first'), gd=('own_gd5', 'first'), xgf=('own_xgf', 'first'),
-                               xga=('own_xga', 'first'), cs=('p_team_cs', 'first'), opp=(f'opp_{G0}', 'first'))
-    sort = st.segmented_control('Sort teams by', ['Form', 'Attack (xG for)', 'Defence (xG against)', f'GW{G0} clean sheet chance'], default='Form', key='tf_sort') or 'Form'
-    key = {'Form': ('form', False), 'Attack (xG for)': ('xgf', False), 'Defence (xG against)': ('xga', True), f'GW{G0} clean sheet chance': ('cs', False)}[sort]
-    TF = TF.sort_values(key[0], ascending=key[1])
-    bar = lambda v, mx, good=True: f'<div class="xpbar" style="min-width:90px"><i style="width:{max(4, min(100, 100 * v / mx)):.0f}%;{"" if good else "background:linear-gradient(90deg,#ff1751,#e90052)"}"></i><span>{v:.2f}</span></div>'
-    body = ''.join(f'<tr><td><div class="who"><img src="{ui.shirt(r.code)}"><b>{tm}</b></div></td><td>{bar(r.form, 3)}</td><td>{r.gd:+.2f}</td><td>{bar(r.xgf, 2.6)}</td>'
-                   f'<td>{bar(r.xga, 2.6, False)}</td><td>{ui.esc(r.opp)}</td><td><b style="color:{ui.GREEN}">{100 * r.cs:.0f}%</b></td></tr>' for tm, r in TF.iterrows())
-    html('<table class="fpl"><tr><th>Team</th><th>Points / game (last 5)</th><th>Goal diff / game (last 5)</th><th>xG for / game</th><th>xG against / game</th>'
-         f'<th>GW{G0} opponent</th><th>Clean sheet chance</th></tr>{body}</table>')
-    html('<div class="note" style="margin-top:6px">Form uses the last 5 results. xG for and against use the last 10 games, pulled a little towards the league average. '
-         'All of these feed the model, so a team in hot form or with a tight defence already lifts its players\' projections.</div>')
 
 # ================================================================== REVIEW: predicted vs what happened
 elif page == 'Review':
@@ -1467,14 +1547,10 @@ Tested on this season from Gameweek 3, which the models never saw:""")
     html('<table class="fpl"><tr><th>Method</th><th>Typical error</th><th>Average error</th><th>Ranking accuracy</th></tr>' +
          ''.join(f'<tr><td><b>{nm[r.predictor]}</b></td><td>{r.RMSE:.2f}</td><td>{r.MAE:.2f}</td><td>{r._4:.3f}</td></tr>' for r in s.itertuples()) + '</table>')
     ev = pd.read_csv(ROOT / 'models' / 'event_scores.csv')
-    evn = {'goal': 'Scores', 'assist': 'Assists', 'cs': 'Clean sheet (player-level model)', 'mins60': 'Plays 60+ minutes', 'bonus': 'Gets bonus points',
+    evn = {'goal': 'Scores', 'assist': 'Assists', 'cs': 'Clean sheets', 'mins60': 'Plays 60+ minutes', 'bonus': 'Gets bonus points',
            'dc': 'Defensive contribution (DEF, MID, FWD; 2025-26 on)'}
     html('<div class="sec" style="font-size:1.05rem">Chances: predicted vs what happened</div><table class="fpl"><tr><th>Event</th><th>Predicted rate</th><th>Actual rate</th><th>Top 200 predicted</th><th>Top 200 actual</th><th>Better than guessing the average</th></tr>' +
          ''.join(f'<tr><td><b>{evn[r.event]}</b></td><td>{100 * r._3:.1f}%</td><td>{100 * r._2:.1f}%</td><td>{100 * r._7:.1f}%</td><td>{100 * r._8:.1f}%</td><td>{r._4:.0f}%</td></tr>' for r in ev.itertuples()) + '</table>')
-    html('<div class="note" style="margin-top:6px">Clean sheets are running hot this season (29% of team games, against 21% to 27% in the last four seasons and about 23% expected from the chances teams allow), '
-         'so the model expects some return to normal. The clean-sheet chance shown in the app comes from expected goals: the opponent\'s xG per game and the team\'s xG '
-         'against per game give the goals the team should concede, and from that the chance of conceding none. The points model uses the same estimate, so the two always agree. '
-         'Tested on 3,240 team-matches since 2022-23, it was more accurate than a separate clean-sheet model in every season.</div>')
     html('<div class="note" style="margin-top:10px">Regular starters only. FPL points are very random: one goal changes a score by 4 to 10 points, so a typical error of about 3 is normal. '
          'The model ranks players better than recent form, but nobody can tell you who will score this weekend. Projections further ahead hold each player\'s form at today\'s level, so they are rougher.</div>')
 

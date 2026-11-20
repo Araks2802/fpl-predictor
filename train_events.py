@@ -44,6 +44,18 @@ def fit(df, y):
     return m.fit(df[F].fillna(-1), y.astype(int))
 
 
+def cs_like_app(h, train, d):
+    """The clean-sheet chance the app shows (see make_predictions.py): the team's chance from expected goals (cs_chance),
+    rescaled to the real clean-sheet rate on the training seasons only, times the player's chance of playing 60+ minutes."""
+    from sklearn.linear_model import LogisticRegression
+    lg = lambda p: np.log(p.clip(0.01, 0.99) / (1 - p.clip(0.01, 0.99))).values[:, None]
+    T = team_table(h); Tp = T[~T.future & T.cs.notna()]
+    Ttr = Tp[(Tp.si < 3) | ((Tp.season == '2025-26') & (Tp.gw <= 28))]
+    cal = LogisticRegression().fit(lg(Ttr.cs_chance), Ttr.cs.astype(int))
+    p60 = fit(train, train.minutes >= 60).predict_proba(d[F].fillna(-1))[:, 1]
+    return cal.predict_proba(lg(d.cs_chance))[:, 1] * p60
+
+
 if __name__ == '__main__':
     h = fd.build(horizon=1)
     hist = h[~h.future & h.total_points.notna() & h.pos.isin([1, 2, 3, 4])]
@@ -56,6 +68,7 @@ if __name__ == '__main__':
         keep = ROWS.get(ev, lambda d: d.minutes.notna())
         tr_, te_ = train[keep(train)], test[keep(test)]
         m = fit(tr_, fn(tr_)); p = m.predict_proba(te_[F].fillna(-1))[:, 1]; y = fn(te_).astype(int).values
+        if ev == 'cs': p = cs_like_app(h, tr_, te_)                     # score the clean-sheet chance the app shows, not this player-level model
         test_probs[f'p_{ev}'] = m.predict_proba(rv[F].fillna(-1))[:, 1] if ev != 'dc' else np.where(rv.pos == 1, 0.0, m.predict_proba(rv[F].fillna(-1))[:, 1])
         base = np.full(len(y), fn(tr_).mean())                           # baseline: everyone gets the average rate
         brier, brier0 = np.mean((p - y) ** 2), np.mean((base - y) ** 2)
