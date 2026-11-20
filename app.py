@@ -214,56 +214,73 @@ def confirm_block(new, made_now, team_, gw, after=None, key='cf'):
     return b
 
 
-@st.dialog('Add a transfer you have made', width='large')
+@st.dialog('Add the transfers you have made', width='large')
 def made_dialog(team_, made_now, gw):
-    """Tap who you sold, then pick who you bought, then confirm. All in one pop-up."""
+    """Add one or more transfers: tap who you sold, pick who you bought, repeat; then review them all and confirm. All in one pop-up."""
     S = st.session_state
-    sq = team_['squad'].set_index('id'); ids_ = [int(i) for i in sq.index]
-    o = S.get('md_out'); i_ = S.get('md_in')
-    if o is not None and o not in ids_: o = S['md_out'] = None
-    # step 1: who did you sell? tap him on your team's pitch
+    sq = team_['squad'].set_index('id'); base = [int(i) for i in sq.index]
+    bk = [tuple(int(x) for x in p_) for p_ in S.setdefault('md_basket', [])]          # (sold, bought) pairs added so far
+    now_ids = list(base)
+    for o_, i_b in bk: now_ids[now_ids.index(o_)] = i_b                                # your squad after them
+    clear = lambda: [S.pop(k, None) for k in ('md_out', 'md_n', 'md_basket', 'md_review')]
+    card = lambda i, kind: (f'<div class="mv {kind}" style="padding:5px 10px"><img src="{ui.shirt(P.team_code[i], P.pos[i] == 1)}"><div><div class="bigname">{ui.esc(P.name[i])}</div>'
+                            f'<div class="m">{P.team[i]} · {POS[P.pos[i]]} · £{P.price[i]:.1f}m</div></div></div>')
+    # the transfers added so far, each with Remove
+    if bk and not S.get('md_review'):
+        html(f'<div class="note" style="margin-bottom:4px"><b style="color:#fff">Your transfers so far ({len(bk)})</b> · bank after them £{bank_after(team_, bk) / 10:.1f}m</div>')
+        for k, (a_, b_) in enumerate(bk):
+            r1, r2 = st.columns([6, 1.2], vertical_alignment='center')
+            r1.markdown(f'<div class="move" style="margin:2px 0">{card(a_, "out")}<div class="arrow">→</div>{card(b_, "in")}</div>', unsafe_allow_html=True)
+            if r2.button('Remove', key=f'md_rm_{k}', use_container_width=True):
+                S['md_basket'] = [list(p_) for j, p_ in enumerate(bk) if j != k]; S['md_out'] = None; st.rerun(scope='fragment')
+    # last step: review all of them and confirm
+    if S.get('md_review') and bk:
+        b = confirm_block(bk, made_now, team_, gw, after=clear, key='mdcf')
+        if b.button('Back', use_container_width=True, key='md_back'):
+            S['md_review'] = False; st.rerun(scope='fragment')
+        return
+    o = S.get('md_out')
+    if o is not None and o not in now_ids: o = S['md_out'] = None
+    # step 1: who did you sell? tap him on your team's pitch (it already shows the transfers added above)
     if o is None:
-        html('<div class="note" style="margin-bottom:6px"><b style="color:#fff">Step 1 of 3.</b> Tap the name of the player you sold.</div>')
-        xi_, cap_, vice_, bench_ = lineup(tuple(sorted(ids_)), gw, BOOST)
-        hit_ = click_pitch(xi_, bench_, cap_, vice_, gw, tag='md', order=ids_, tip='I sold {name}')
+        html('<div class="note" style="margin:8px 0 6px 0"><b style="color:#fff">' + ('Add another transfer:' if bk else 'Step 1.') +
+             '</b> tap the name of the player you sold.' + (' Or, if that is all of them, review and confirm.' if bk else '') + '</div>')
+        if bk and st.button(f'Review and confirm {len(bk)} transfer{"s" if len(bk) > 1 else ""}', type='primary', use_container_width=True, key='md_review_btn'):
+            S['md_review'] = True; st.rerun(scope='fragment')
+        xi_, cap_, vice_, bench_ = lineup(tuple(sorted(now_ids)), gw, BOOST)
+        hit_ = click_pitch(xi_, bench_, cap_, vice_, gw, tag=f'md{len(bk)}', order=now_ids, tip='I sold {name}', ins=[b_ for _, b_ in bk])
         if hit_ is not None:
-            S['md_out'] = int(hit_); S['md_in'] = None; st.rerun(scope='fragment')
+            S['md_out'] = int(hit_); st.rerun(scope='fragment')
         return
-    money = team_['bank'] + int(sq.sell[o])
+    # step 2: who did you buy? (selling a player you just bought here replaces that transfer)
+    orig = next((a_ for a_, b_ in bk if b_ == o), o); rest = [p_ for p_ in bk if p_[1] != o]
+    money = bank_after(team_, rest) + int(sq.sell[orig])
     top = st.columns([5, 1.2])
-    top[0].markdown(f'<div class="mv out" style="padding:6px 10px"><img src="{ui.shirt(P.team_code[o], P.pos[o] == 1)}"><div><div class="bigname">Sold: {ui.esc(P.name[o])}</div>'
-                    f'<div class="m">{P.team[o]} · {POS[P.pos[o]]} · sells for £{sq.sell[o] / 10:.1f}m · money available £{money / 10:.1f}m</div></div></div>', unsafe_allow_html=True)
+    top[0].markdown(f'<div class="mv out" style="padding:6px 10px"><img src="{ui.shirt(P.team_code[orig], P.pos[orig] == 1)}"><div><div class="bigname">Sold: {ui.esc(P.name[orig])}</div>'
+                    f'<div class="m">{P.team[orig]} · {POS[P.pos[orig]]} · sells for £{sq.sell[orig] / 10:.1f}m · money available £{money / 10:.1f}m</div></div></div>', unsafe_allow_html=True)
     if top[1].button('Change', key='md_change_out', use_container_width=True):
-        S['md_out'] = None; S['md_in'] = None; st.rerun(scope='fragment')
-    # step 2: who did you buy?
-    if i_ is None:
-        html('<div class="note" style="margin:8px 0 4px 0"><b style="color:#fff">Step 2 of 3.</b> Pick the player you bought.</div>')
-        cand = P[(P.pos == P.pos[o]) & ~P.index.isin(ids_)].copy()
-        f1, f2, f3 = st.columns([2, 1.6, 1.6])
-        teams = f1.multiselect('Teams', sorted(cand.team.unique()), placeholder='All teams', key='md_tm')
-        mx = f2.slider('Max price (£m)', 3.5, 16.0, 16.0, 0.5, key='md_mx')
-        q = f3.text_input('Search', placeholder='Name', key='md_q')
-        if teams: cand = cand[cand.team.isin(teams)]
-        cand = cand[cand.price <= mx + 1e-9]
-        if q: cand = cand[cand.name.str.contains(q, case=False)]
-        cand = cand.sort_values(['selected', 'price'], ascending=False)        # most-owned first: the players people usually buy
-        n = S.get('md_n', 12)
-        for i, r_ in cand.head(n).iterrows():
-            a, b = st.columns([6, 1.3])
-            short = round(r_.price * 10) - money
-            a.markdown(f'<div class="mv {"out" if short > 0 else "in"}" style="padding:5px 10px"><img src="{ui.shirt(r_.team_code, r_.pos == 1)}"><div><div class="bigname">{ui.esc(r_["name"])} '
-                       f'<span class="note">{r_.team}</span></div><div class="m">£{r_.price:.1f}m · owned {r_.selected:.0f}%'
-                       + (f' · <b style="color:#e90052">over budget by £{short / 10:.1f}m</b>' if short > 0 else '') + '</div></div></div>', unsafe_allow_html=True)
-            if b.button('Transfer' if short <= 0 else 'Too costly', key=f'md_i_{i}', disabled=short > 0, type='primary' if short <= 0 else 'secondary', use_container_width=True):
-                S['md_in'] = int(i); st.rerun(scope='fragment')
-        if cand.empty: st.info('No players match.')
-        if len(cand) > n and st.button('Show more', key='md_more'): S['md_n'] = n + 12; st.rerun(scope='fragment')
-        return
-    # step 3: confirm
-    html('<div class="note" style="margin:8px 0 4px 0"><b style="color:#fff">Step 3 of 3.</b> Check and confirm.</div>')
-    b = confirm_block([(int(o), int(i_))], made_now, team_, gw, after=lambda: [S.pop(k, None) for k in ('md_out', 'md_in', 'md_n')], key='mdcf')
-    if b.button('Back', use_container_width=True, key='md_back'):
-        S['md_in'] = None; st.rerun(scope='fragment')
+        S['md_out'] = None; st.rerun(scope='fragment')
+    html('<div class="note" style="margin:8px 0 4px 0"><b style="color:#fff">Step 2.</b> Pick the player you bought.</div>')
+    cand = P[(P.pos == P.pos[orig]) & ~P.index.isin(now_ids) & (P.index != orig)].copy()
+    f1, f2, f3 = st.columns([2, 1.6, 1.6])
+    teams = f1.multiselect('Teams', sorted(cand.team.unique()), placeholder='All teams', key='md_tm')
+    mx = f2.slider('Max price (£m)', 3.5, 16.0, 16.0, 0.5, key='md_mx')
+    q = f3.text_input('Search', placeholder='Name', key='md_q')
+    if teams: cand = cand[cand.team.isin(teams)]
+    cand = cand[cand.price <= mx + 1e-9]
+    if q: cand = cand[cand.name.str.contains(q, case=False)]
+    cand = cand.sort_values(['selected', 'price'], ascending=False)        # most-owned first: the players people usually buy
+    n = S.get('md_n', 12)
+    for i, r_ in cand.head(n).iterrows():
+        a, b = st.columns([6, 1.3])
+        short = round(r_.price * 10) - money
+        a.markdown(f'<div class="mv {"out" if short > 0 else "in"}" style="padding:5px 10px"><img src="{ui.shirt(r_.team_code, r_.pos == 1)}"><div><div class="bigname">{ui.esc(r_["name"])} '
+                   f'<span class="note">{r_.team}</span></div><div class="m">£{r_.price:.1f}m · owned {r_.selected:.0f}%'
+                   + (f' · <b style="color:#e90052">over budget by £{short / 10:.1f}m</b>' if short > 0 else '') + '</div></div></div>', unsafe_allow_html=True)
+        if b.button('Transfer' if short <= 0 else 'Too costly', key=f'md_i_{i}', disabled=short > 0, type='primary' if short <= 0 else 'secondary', use_container_width=True):
+            S['md_basket'] = [list(p_) for p_ in rest] + [[int(orig), int(i)]]; S['md_out'] = None; S['md_n'] = 12; st.rerun(scope='fragment')
+    if cand.empty: st.info('No players match.')
+    if len(cand) > n and st.button('Show more', key='md_more'): S['md_n'] = n + 12; st.rerun(scope='fragment')
 
 
 def apply_made(team_, made_):
@@ -412,8 +429,8 @@ with st.sidebar:
                 st.markdown(f'<div class="note" style="color:#e90052"><b>−{fe.HIT * team["made_hits"]} hit</b> taken off your GW{G0} score.</div>', unsafe_allow_html=True)
             if team['free_transfers'] == 0:
                 st.markdown('<div class="note" style="color:#e90052">No free transfers left: another one costs −4.</div>', unsafe_allow_html=True)
-            if st.button('➕ Add a transfer I\'ve made', use_container_width=True, key='md_open'):
-                for k in ('md_out', 'md_in', 'md_n'): st.session_state.pop(k, None)
+            if st.button('➕ Add transfers I\'ve made', use_container_width=True, key='md_open'):
+                for k in ('md_out', 'md_in', 'md_n', 'md_basket', 'md_review'): st.session_state.pop(k, None)
                 made_dialog(team, made, G0)
         with st.expander('Bank and free transfers'):
             sig = f'{tid}_{"_".join(f"{o}-{i}" for o, i in made)}'      # a new key whenever your transfers change, so the boxes refresh
@@ -696,76 +713,118 @@ elif page == 'Compare':
     # players are compared within one position: the stats that earn points differ by position (saves for keepers, goals for forwards...)
     mine_ = [int(i) for i in team['squad'].id] if team else []
     top_ = max(mine_, key=lambda i: P.loc[i, f'xp_{G0}']) if mine_ else int(P[P.status != 'u'][f'xp_{G0}'].idxmax())
-    c0, c1, c2 = st.columns([1.4, 3, 1])
-    pos_lab = c0.segmented_control('Position', ['GK', 'DEF', 'MID', 'FWD'], default=POS[P.pos[top_]], key='cmp_pos') or POS[P.pos[top_]]
+    c0, c2 = st.columns([1, 2.4], gap='medium')   # position above the list, gameweek above the comparison
+    c1 = st.container()
+    def keep_pos():                           # clicking the selected position again would clear it: keep the last one instead
+        if st.session_state.get('cmp_pos') is None: st.session_state['cmp_pos'] = st.session_state.get('_cmp_pos_last') or 'FWD'
+        st.session_state['_cmp_pos_last'] = st.session_state['cmp_pos']
+    pos_lab = c0.segmented_control('Position', ['GK', 'DEF', 'MID', 'FWD'], default=POS[P.pos[top_]], key='cmp_pos', on_change=keep_pos) or POS[P.pos[top_]]
+    st.session_state['_cmp_pos_last'] = pos_lab
     pnum = {v: k for k, v in POS.items()}[pos_lab]
     pool = P[(P.status != 'u') & (P.pos == pnum)]
     mine_p = sorted([i for i in mine_ if P.pos[i] == pnum], key=lambda i: -P.loc[i, f'xp_{G0}'])
     default = mine_p[:2] if len(mine_p) >= 2 else list(pool.nlargest(2, f'xp_{G0}').index)
-    cmp_ = c1.multiselect(f'{pos_lab} to compare (up to 4)', pool.sort_values('h3', ascending=False).index.tolist(), default=default,
-                          format_func=LAB.get, max_selections=4, key=f'cmp_{pos_lab}')
     gsel = c2.segmented_control('Gameweek', [f'GW{g}' for g in G2[:3]], default=f'GW{G0}', key='cmp_gw') or f'GW{G0}'
     g = int(gsel[2:])
-    if not cmp_:
-        st.info('Pick two to four players to compare.')
-    else:
-        R = P.loc[cmp_]
-        # header cards with shirts
-        heads = ''.join(f'<td style="text-align:center;padding:10px"><img src="{ui.shirt(r.team_code, r.pos == 1)}" style="width:70px"><div class="bigname" style="font-family:Outfit;font-weight:800;font-size:1.15rem">'
-                        f'{ui.esc(r["name"])}</div><div class="note">{r.team} · {POS[r.pos]} · £{r.price:.1f}m</div></td>' for _, r in R.iterrows())
-        pct = lambda v: f'{100 * v:.0f}%'
-        n0 = lambda v: f'{v:.0f}'; n1 = lambda v: f'{v:.1f}'; n2 = lambda v: f'{v:.2f}'
-        S = season_stats().reindex(R.index)
-        only = lambda vals, *ps: vals.where(R.pos.isin(ps))          # a stat that only matters for some positions: '-' for the others
-        GK, DF, MD, FW = 1, 2, 3, 4
-        rows = [  # (label, values, format, higher is better?) or ('#', section title)
-            ('#', f'Projection · GW{g}'),
-            (f'Projected points GW{g}', R[f'xp_{g}'], n1, True), ('Projected next 3 GWs', R.h3, n1, True),
-            ('Chance to score', only(R[f'p_goal_{g}'], DF, MD, FW), pct, True), ('Chance of an assist', only(R[f'p_assist_{g}'], DF, MD, FW), pct, True),
-            ('Clean sheet chance', only(R[f'p_cs_{g}'], GK, DF, MD), pct, True),
-            ('Defensive contribution chance', only(R[f'p_dc_{g}'], DF, MD, FW), pct, True),
-            ('Bonus chance', R[f'p_bonus_{g}'], pct, True), ('Expected bonus points', R[f'xb_{g}'], n2, True),
-            ('Plays 60+ mins', R[f'p_60_{g}'], pct, True),
-            ('Opponent', R[f'opp_{g}'], str, None), ('Fixture difficulty', R[f'fdr_{g}'], lambda v: f'{v:.0f} / 5', False),
-            ('#', 'Season so far'),
-            ('Points', R.total_points, n0, True), ('Points per game played', S.ppg, n1, True), ('Minutes', S.minutes, n0, True), ('Starts', S.starts, n0, True),
-            ('Goals', only(S.goals, DF, MD, FW), n0, True), ('Expected goals (xG)', only(S.xg, DF, MD, FW), n1, True),
-            ('Assists', only(S.assists, DF, MD, FW), n0, True), ('Expected assists (xA)', only(S.xa, DF, MD, FW), n1, True),
-            ('Clean sheets', only(S.cs, GK, DF, MD), n0, True), ('Clean sheet points', only(S.cs_pts, GK, DF, MD), n0, True),
-            ('Goals conceded', only(S.gc, GK, DF), n0, False), ('Points lost to goals conceded', only(-S.gc_pts, GK, DF), n0, True),
-            ('Saves', only(S.saves, GK), n0, True), ('Saves per 90', only(S.saves90, GK), n1, True), ('Save points', only(S.save_pts, GK), n0, True),
-            ('Penalties saved', only(S.pen_saved, GK), n0, True),
-            ('Defensive contribution points', only(S.dc_pts, DF, MD, FW), n0, True),
-            ('Bonus points', S.bonus, n0, True), ('Yellow / red cards', S.cards, str, None),
-            ('#', 'Form and value'),
-            ('FPL form (pts / match, 30 days)', R.form, n1, True),
-            ('Hit the defensive threshold (last 10)', only(R.dc_hit_r10, DF, MD, FW), pct, True), ('Defensive actions per 90 (last 10)', only(R.dc_p90_r10, DF, MD, FW), n1, True),
-            ('Got bonus (last 10 games played)', R.bonus_rate_r10, pct, True),
-            ('Points per £m (next 3)', R.h3 / R.price, n2, True), ('Owned by', R.selected / 100, pct, None),
-            ('vs this opponent (pts vs his usual)', R.h2h_adj, lambda v: f'{v:+.1f}', True), ('Home / away effect (pts vs usual)', R.venue_adj, lambda v: f'{v:+.1f}', True)]
-        body = ''
-        for lab, vals, *rest in rows:
-            if lab == '#':
-                body += f'<tr><td colspan="{len(R) + 1}" style="padding-top:14px"><div class="ptitle" style="margin:0">{vals}</div></td></tr>'; continue
-            fmt, hib = rest
-            if vals.isna().all(): continue                            # nobody selected plays a position this stat applies to
-            v = vals.values
-            best = None
-            if hib is not None and pd.notna(v).sum() > 1:
-                vv = pd.Series(v, dtype=float); top_ = vv.max() if hib else vv.min()
-                best = (vv.idxmax() if hib else vv.idxmin()) if (vv.round(2) == round(top_, 2)).sum() == 1 else None   # no highlight on a tie
-            cells = ''.join(f'<td class="{"best" if k == best else ""}" style="text-align:center">{"-" if (not isinstance(x, str) and pd.isna(x)) else fmt(x)}</td>' for k, x in enumerate(v))
-            body += f'<tr><td style="color:#b9a7c2">{lab}</td>{cells}</tr>'
-        html(f'<table class="fpl cmp"><tr><td></td>{heads}</tr>{body}</table>')
-        html('<div class="note" style="margin-top:6px">Green marks the best in each row. "vs this opponent" and "home / away" compare his past points in that situation with his usual level, '
-             'pulled towards zero when there are only a few games. Testing found both add little to the projection, so treat them as a talking point.</div>')
-        sec('Projected points per gameweek')
-        fig = go.Figure()
-        for i, colr in zip(cmp_, [ui.GREEN, ui.CYAN, ui.PINK, '#ebff00']):
-            fig.add_trace(go.Bar(x=[f'GW{x}' for x in G2], y=[P.loc[i, f'xp_{x}'] for x in G2], name=P.name[i], marker_color=colr,
-                                 customdata=[P.loc[i, f'opp_{x}'] for x in G2], hovertemplate='%{x} %{customdata}: %{y:.1f} pts<extra>' + P.name[i] + '</extra>'))
-        fig = ui.plot_style(fig, 320); fig.update_layout(barmode='group', bargap=0.25)
-        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+    # every player in the position, drawn like the Players tab, with a tick box in front of each row (tick 2 to 4).
+    # The picks are kept per position, so changing a filter or switching position never loses them.
+    sel_key = f'cmp_{pos_lab}'
+    if sel_key not in st.session_state: st.session_state[sel_key] = default
+    sel = [int(i) for i in st.session_state[sel_key] if i in pool.index]
+    # left: the filters and a scrollable list of names with a tick box each. Right: the comparison, so it shows next to the list.
+    left_, right_ = st.columns([1, 2.4], gap='medium')
+    with left_:
+        tms_ = st.multiselect('Teams', sorted(pool.team.unique()), placeholder='All teams', key=f'cmp_tm_{pos_lab}')
+        plo, phi = float(np.floor(pool.price.min() * 2) / 2), float(np.ceil(pool.price.max() * 2) / 2)
+        pr_ = st.slider('Price (£m)', plo, phi, (plo, phi), 0.5, key=f'cmp_pr_{pos_lab}')
+        shown_ = pool[pool.price.between(*pr_) & (pool.team.isin(tms_) if tms_ else True)].sort_values(f'xp_{g}', ascending=False)
+
+        def toggle(i, k):
+            s_ = [int(x) for x in st.session_state.get(sel_key, [])]
+            if i in s_: s_.remove(i)
+            elif len(s_) < 4: s_.append(i)
+            st.session_state[sel_key] = s_
+
+        full_ = len(sel) >= 4
+        html(f'<div class="note" style="margin:2px 0 6px 0"><b style="color:#fff">{len(shown_)} {pos_lab}</b> · best projected first · tick 2 to 4'
+             + (' · <span style="color:#ebff00">4 ticked: untick one to swap</span>' if full_ else '') + '</div>')
+    cmp_ = sel
+    hidden_ = [i for i in cmp_ if i not in shown_.index[:80]]
+    with right_:
+        k_ = st.columns([3, 1], vertical_alignment='center')
+        k_[0].markdown('<div class="note">' + (f'<b style="color:#fff">Comparing {len(cmp_)} of 4:</b> ' + ', '.join(
+            ui.esc(P.name[i]) + (' <span style="color:#b9a7c2">(not in the list)</span>' if i in hidden_ else '') for i in cmp_)
+            if cmp_ else 'No players ticked yet.') + '</div>', unsafe_allow_html=True)
+        if k_[1].button('Clear picks', key=f'cmp_clear_{pos_lab}', use_container_width=True, disabled=not cmp_):
+            st.session_state[sel_key] = []; st.rerun()
+        if len(cmp_) < 2:
+            st.info('Tick at least two players in the list to compare them.' if cmp_ else 'Tick two to four players in the list to compare them.')
+        else:
+            R = P.loc[cmp_]
+            # header cards with shirts
+            heads = ''.join(f'<td style="text-align:center;padding:10px"><img src="{ui.shirt(r.team_code, r.pos == 1)}" style="width:70px"><div class="bigname" style="font-family:Outfit;font-weight:800;font-size:1.15rem">'
+                            f'{ui.esc(r["name"])}</div><div class="note">{r.team} · {POS[r.pos]} · £{r.price:.1f}m</div></td>' for _, r in R.iterrows())
+            pct = lambda v: f'{100 * v:.0f}%'
+            n0 = lambda v: f'{v:.0f}'; n1 = lambda v: f'{v:.1f}'; n2 = lambda v: f'{v:.2f}'
+            S = season_stats().reindex(R.index)
+            only = lambda vals, *ps: vals.where(R.pos.isin(ps))          # a stat that only matters for some positions: '-' for the others
+            GK, DF, MD, FW = 1, 2, 3, 4
+            rows = [  # (label, values, format, higher is better?) or ('#', section title)
+                ('#', f'Projection · GW{g}'),
+                (f'Projected points GW{g}', R[f'xp_{g}'], n1, True), ('Projected next 3 GWs', R.h3, n1, True),
+                ('Chance to score', only(R[f'p_goal_{g}'], DF, MD, FW), pct, True), ('Chance of an assist', only(R[f'p_assist_{g}'], DF, MD, FW), pct, True),
+                ('Clean sheet chance', only(R[f'p_cs_{g}'], GK, DF, MD), pct, True),
+                ('Defensive contribution chance', only(R[f'p_dc_{g}'], DF, MD, FW), pct, True),
+                ('Bonus chance', R[f'p_bonus_{g}'], pct, True), ('Expected bonus points', R[f'xb_{g}'], n2, True),
+                ('Plays 60+ mins', R[f'p_60_{g}'], pct, True),
+                ('Opponent', R[f'opp_{g}'], str, None), ('Fixture difficulty', R[f'fdr_{g}'], lambda v: f'{v:.0f} / 5', False),
+                ('#', 'Season so far'),
+                ('Points', R.total_points, n0, True), ('Points per game played', S.ppg, n1, True), ('Minutes', S.minutes, n0, True), ('Starts', S.starts, n0, True),
+                ('Goals', only(S.goals, DF, MD, FW), n0, True), ('Expected goals (xG)', only(S.xg, DF, MD, FW), n1, True),
+                ('Assists', only(S.assists, DF, MD, FW), n0, True), ('Expected assists (xA)', only(S.xa, DF, MD, FW), n1, True),
+                ('Clean sheets', only(S.cs, GK, DF, MD), n0, True), ('Clean sheet points', only(S.cs_pts, GK, DF, MD), n0, True),
+                ('Goals conceded', only(S.gc, GK, DF), n0, False), ('Points lost to goals conceded', only(-S.gc_pts, GK, DF), n0, True),
+                ('Saves', only(S.saves, GK), n0, True), ('Saves per 90', only(S.saves90, GK), n1, True), ('Save points', only(S.save_pts, GK), n0, True),
+                ('Penalties saved', only(S.pen_saved, GK), n0, True),
+                ('Defensive contribution points', only(S.dc_pts, DF, MD, FW), n0, True),
+                ('Bonus points', S.bonus, n0, True), ('Yellow / red cards', S.cards, str, None),
+                ('#', 'Form and value'),
+                ('FPL form (pts / match, 30 days)', R.form, n1, True),
+                ('Hit the defensive threshold (last 10)', only(R.dc_hit_r10, DF, MD, FW), pct, True), ('Defensive actions per 90 (last 10)', only(R.dc_p90_r10, DF, MD, FW), n1, True),
+                ('Got bonus (last 10 games played)', R.bonus_rate_r10, pct, True),
+                ('Points per £m (next 3)', R.h3 / R.price, n2, True), ('Owned by', R.selected / 100, pct, None),
+                ('vs this opponent (pts vs his usual)', R.h2h_adj, lambda v: f'{v:+.1f}', True), ('Home / away effect (pts vs usual)', R.venue_adj, lambda v: f'{v:+.1f}', True)]
+            body = ''
+            for lab, vals, *rest in rows:
+                if lab == '#':
+                    body += f'<tr><td colspan="{len(R) + 1}" style="padding-top:14px"><div class="ptitle" style="margin:0">{vals}</div></td></tr>'; continue
+                fmt, hib = rest
+                if vals.isna().all(): continue                            # nobody selected plays a position this stat applies to
+                v = vals.values
+                best = None
+                if hib is not None and pd.notna(v).sum() > 1:
+                    vv = pd.Series(v, dtype=float); top_ = vv.max() if hib else vv.min()
+                    best = (vv.idxmax() if hib else vv.idxmin()) if (vv.round(2) == round(top_, 2)).sum() == 1 else None   # no highlight on a tie
+                cells = ''.join(f'<td class="{"best" if k == best else ""}" style="text-align:center">{"-" if (not isinstance(x, str) and pd.isna(x)) else fmt(x)}</td>' for k, x in enumerate(v))
+                body += f'<tr><td style="color:#b9a7c2">{lab}</td>{cells}</tr>'
+            html(f'<table class="fpl cmp"><tr><td></td>{heads}</tr>{body}</table>')
+            html('<div class="note" style="margin-top:6px">Green marks the best in each row. "vs this opponent" and "home / away" compare his past points in that situation with his usual level, '
+                 'pulled towards zero when there are only a few games. Testing found both add little to the projection, so treat them as a talking point.</div>')
+            sec('Projected points per gameweek')
+            fig = go.Figure()
+            for i, colr in zip(cmp_, [ui.GREEN, ui.CYAN, ui.PINK, '#ebff00']):
+                fig.add_trace(go.Bar(x=[f'GW{x}' for x in G2], y=[P.loc[i, f'xp_{x}'] for x in G2], name=P.name[i], marker_color=colr,
+                                     customdata=[P.loc[i, f'opp_{x}'] for x in G2], hovertemplate='%{x} %{customdata}: %{y:.1f} pts<extra>' + P.name[i] + '</extra>'))
+            fig = ui.plot_style(fig, 320); fig.update_layout(barmode='group', bargap=0.25)
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+    with left_:                                 # the scrollable player list, under the filters
+        with st.container(height=640, key=f'cmplist_{pos_lab}', border=False):
+            for i in shown_.index[:80]:
+                i = int(i); ck = f'cmpck_{pos_lab}_{i}'; st.session_state[ck] = i in sel
+                rc_ = st.columns([1, 9], vertical_alignment='center')
+                rc_[0].checkbox(f'Compare {P.name[i]}', key=ck, on_change=toggle, args=(i, ck), disabled=full_ and i not in sel, label_visibility='collapsed')
+                rc_[1].markdown(ui.name_rows(P, [i], picked=sel), unsafe_allow_html=True)
+        if len(shown_) > 80: html(f'<div class="note" style="margin-top:4px">The top 80 of {len(shown_)} by projected points. Use the team and price filters to find others.</div>')
 
 # ================================================================== PLANNER: a sandbox for your own transfers
 elif page == 'Planner':

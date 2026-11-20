@@ -111,6 +111,19 @@ details.pd > summary, details.res5 > summary {list-style: none; cursor: pointer;
 .pd-card .how {color: #e6d9ec; font-size: .74rem;} .pd-card .tot {font-family: 'Outfit'; font-weight: 800; color: #00ff87; font-size: .95rem; text-align: right;}
 details.res5 .res5-list {margin-top: 6px; font-size: .78rem; line-height: 1.6; color: #e6d9ec;} details.res5 .res5-list b {color: #fff;}
 .res5-hint {color: #04f5ff; font-size: .7rem; font-weight: 600; margin-left: 4px;}
+/* Compare: the Players-tab list, one row per player with a tick box in front */
+table.fpl.fixed {table-layout: fixed;} table.fpl.fixed td, table.fpl.fixed th {overflow: visible;}
+table.fpl tr.sel td {background: rgba(0,255,135,.10) !important;}
+[class*="st-key-cmplist_"], [class*="st-key-cmplist_"] [data-testid="stVerticalBlock"] {gap: 0 !important;}
+table.fpl.fixed .xpbar {min-width: 0;}
+[class*="st-key-cmplist_"] [data-testid="stHorizontalBlock"] {flex-wrap: nowrap !important; gap: .5rem !important; align-items: center;}
+[class*="st-key-cmplist_"] [data-testid="stColumn"]:first-child {flex: 0 0 30px !important; width: 30px !important; min-width: 30px !important;}
+[class*="st-key-cmplist_"] [data-testid="stColumn"]:last-child {flex: 1 1 auto !important; min-width: 0 !important;}
+[class*="st-key-cmplist_"] [data-testid="stElementContainer"], [class*="st-key-cmplist_"] [data-testid="stMarkdownContainer"] {margin: 0 !important;}
+[class*="st-key-cmplist_"] table.fpl {border-spacing: 0 2px; margin: 0;}
+[class*="st-key-cmplist_"] [data-testid="stCheckbox"] label {padding: 0; min-height: 0;}
+[class*="st-key-cmplist_"] table.fpl td {padding: 5px 8px;}
+@media (max-width: 640px) { [class*="st-key-cmplist_"] {height: 330px !important; max-height: 330px !important;} }   /* phones: a shorter list, so the comparison is close below */
 /* the team ID box in the sidebar: green, like the selected buttons */
 .st-key-eid label {display: inline-flex; align-items: center; gap: 8px; width: auto; background: rgba(0,255,135,.1); border: 1px solid #00ff87; border-radius: 8px; padding: 3px 10px; margin-bottom: 6px;}
 .st-key-eid label p {color: #00ff87 !important; font-weight: 600;}
@@ -228,10 +241,27 @@ def chances(r, g):
     return '<div class="chn">' + ' · '.join(attack) + '</div>' + ('<div class="chn">' + ' · '.join(defend) + '</div>' if defend else '')
 
 
-def player_table(P, ids, gws, value_col, max_val=None, extra=None, show_fix=4, detail=None):
+FIXED_COLS = '<colgroup><col style="width:22%"><col style="width:7%"><col style="width:7%"><col style="width:5%"><col style="width:23%"><col style="width:16%"><col style="width:13%"><col style="width:7%"></colgroup>'
+
+
+def name_rows(P, ids, picked=()):
+    """Just the player cell of player_table (shirt, name, position, team), one row per player, for the Compare picker."""
+    body = ''
+    for i in ids:
+        r = P.loc[i]
+        news = f'<div class="t" style="color:#ffab1b">{esc(r.news)}</div>' if isinstance(r.news, str) and r.news else ''
+        body += (f'<tr class="{"sel" if i in picked else ""}"><td><div class="who"><img src="{shirt(r.team_code, r.pos == 1)}"><div><b>{esc(r["name"])}</b>'
+                 f'<span class="pos" style="background:{POS_COL[r.pos]}">{POS[r.pos]}</span><div class="t">{esc(r.team)} · £{r.price:.1f}m</div>{news}</div></div></td></tr>')
+    return f'<table class="fpl">{body}</table>'
+
+
+def player_table(P, ids, gws, value_col, max_val=None, extra=None, show_fix=4, detail=None, head=True, body=True, fixed=False, picked=()):
     """HTML player list with shirts, fixture chips, next-gameweek chances and an expected-points bar.
-    detail: optional {id: html} shown in a card when the player's name is clicked (e.g. his last 5 games)."""
-    max_val = max_val or max(P.loc[ids, value_col].max(), 1)
+    detail: optional {id: html} shown in a card when the player's name is clicked (e.g. his last 5 games).
+    head / body: draw only the header or only the rows. fixed: fixed column widths, so separately drawn rows line up under one header.
+    picked: rows to highlight (players ticked for a comparison)."""
+    show_head, show_body = head, body
+    max_val = max_val or (max(P.loc[ids, value_col].max(), 1) if len(ids) else 1)
     head = (f'<tr><th>Player</th><th>Price</th><th>Owned</th><th>Form</th><th>Next fixtures</th><th>GW{gws[0]} chances</th><th>Projected</th><th>Pts / £m</th>'
             + (f'<th>{extra[0]}</th>' if extra else '') + '</tr>')
     body = ''
@@ -245,11 +275,12 @@ def player_table(P, ids, gws, value_col, max_val=None, extra=None, show_fix=4, d
                + (' · <span class="pd-hint">last 5 ▾</span>' if detail and i in detail else '') + f'</div>{news}</div></div>')
         if detail and i in detail:
             who = f'<details class="pd"><summary>{who}</summary><div class="pd-card">{detail[i]}</div></details>'
-        body += (f'<tr><td style="position:relative">{who}</td>'
+        body += (f'<tr class="{"sel" if i in picked else ""}"><td style="position:relative">{who}</td>'
                  f'<td>£{r.price:.1f}m</td><td>{r.selected:.1f}%</td><td>{r.form:.1f}</td><td class="fxs">{fx}</td><td>{chances(r, gws[0])}</td>'
                  f'<td><div class="xpbar"><i style="width:{w:.0f}%"></i><span>{r[value_col]:.1f}</span></div></td><td>{r[value_col] / r.price:.2f}</td>'
                  + (f'<td>{extra[1](i)}</td>' if extra else '') + '</tr>')
-    return f'<table class="fpl">{head}{body}</table>'
+    return (f'<table class="fpl{" fixed" if fixed else ""}">{FIXED_COLS if fixed and not extra else ""}'
+            f'{head if show_head else ""}{body if show_body else ""}</table>')
 
 
 def ticker(rows, gws):
