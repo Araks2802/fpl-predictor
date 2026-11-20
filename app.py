@@ -195,7 +195,10 @@ def confirm_block(new, made_now, team_, gw, after=None, key='cf'):
         html(f'<div class="move" style="margin:4px 0">{card(o, "out")}<div class="arrow">→</div>{card(i, "in")}</div>')
     if bk < 0:
         html(f'<div class="card" style="padding:12px 14px;border-color:#e90052;margin:8px 0"><div class="v" style="color:#e90052;font-size:1.2rem">Over budget by £{-bk / 10:.1f}m</div>'
-             f'<div class="l" style="font-size:.88rem">You have £{team_["bank"] / 10:.1f}m in the bank. FPL would not allow this transfer, so it cannot be confirmed. Pick a cheaper player.</div></div>')
+             f'<div class="l" style="font-size:.88rem">You have £{team_["bank"] / 10:.1f}m in the bank. '
+             + ('Together these transfers cost more than you have, so FPL would not allow them. Go back and change one, or add a transfer that frees up money.'
+                if n > 1 else 'FPL would not allow this transfer, so it cannot be confirmed. Go back and pick a cheaper player, or add a transfer that frees up money.')
+             + '</div></div>')
     else:
         html(f'<div class="note" style="margin:6px 0">Bank afterwards: <b style="color:#00ff87">£{bk / 10:.1f}m</b></div>')
     if hits:
@@ -227,7 +230,10 @@ def made_dialog(team_, made_now, gw):
                             f'<div class="m">{P.team[i]} · {POS[P.pos[i]]} · £{P.price[i]:.1f}m</div></div></div>')
     # the transfers added so far, each with Remove
     if bk and not S.get('md_review'):
-        html(f'<div class="note" style="margin-bottom:4px"><b style="color:#fff">Your transfers so far ({len(bk)})</b> · bank after them £{bank_after(team_, bk) / 10:.1f}m</div>')
+        bnow = bank_after(team_, bk)
+        html(f'<div class="note" style="margin-bottom:4px"><b style="color:#fff">Your transfers so far ({len(bk)})</b> · bank after them '
+             + (f'<b style="color:#00ff87">£{bnow / 10:.1f}m</b>' if bnow >= 0 else
+                f'<b style="color:#e90052">−£{-bnow / 10:.1f}m</b>: over budget. Add or change a transfer to free up £{-bnow / 10:.1f}m before you confirm.') + '</div>')
         for k, (a_, b_) in enumerate(bk):
             r1, r2 = st.columns([6, 1.2], vertical_alignment='center')
             r1.markdown(f'<div class="move" style="margin:2px 0">{card(a_, "out")}<div class="arrow">→</div>{card(b_, "in")}</div>', unsafe_allow_html=True)
@@ -274,10 +280,12 @@ def made_dialog(team_, made_now, gw):
     for i, r_ in cand.head(n).iterrows():
         a, b = st.columns([6, 1.3])
         short = round(r_.price * 10) - money
-        a.markdown(f'<div class="mv {"out" if short > 0 else "in"}" style="padding:5px 10px"><img src="{ui.shirt(r_.team_code, r_.pos == 1)}"><div><div class="bigname">{ui.esc(r_["name"])} '
+        # any player can be picked: only the total of all your transfers has to fit the budget (checked when you confirm)
+        a.markdown(f'<div class="mv in" style="padding:5px 10px"><img src="{ui.shirt(r_.team_code, r_.pos == 1)}"><div><div class="bigname">{ui.esc(r_["name"])} '
                    f'<span class="note">{r_.team}</span></div><div class="m">£{r_.price:.1f}m · owned {r_.selected:.0f}%'
-                   + (f' · <b style="color:#e90052">over budget by £{short / 10:.1f}m</b>' if short > 0 else '') + '</div></div></div>', unsafe_allow_html=True)
-        if b.button('Transfer' if short <= 0 else 'Too costly', key=f'md_i_{i}', disabled=short > 0, type='primary' if short <= 0 else 'secondary', use_container_width=True):
+                   + (f' · <span style="color:#ffab1b">£{short / 10:.1f}m more than you have now: other transfers must free it up</span>' if short > 0 else '')
+                   + '</div></div></div>', unsafe_allow_html=True)
+        if b.button('Transfer', key=f'md_i_{i}', type='primary', use_container_width=True):
             S['md_basket'] = [list(p_) for p_ in rest] + [[int(orig), int(i)]]; S['md_out'] = None; S['md_n'] = 12; st.rerun(scope='fragment')
     if cand.empty: st.info('No players match.')
     if len(cand) > n and st.button('Show more', key='md_more'): S['md_n'] = n + 12; st.rerun(scope='fragment')
