@@ -214,12 +214,6 @@ def confirm_block(new, made_now, team_, gw, after=None, key='cf'):
     return b
 
 
-@st.dialog('Confirm your transfers')
-def confirm_dialog(new, made_now, team_, gw, after=None):
-    b = confirm_block(new, made_now, team_, gw, after)
-    if b.button('Cancel', use_container_width=True, key='cf_no'): st.rerun()
-
-
 @st.dialog('Add a transfer you have made', width='large')
 def made_dialog(team_, made_now, gw):
     """Tap who you sold, then pick who you bought, then confirm. All in one pop-up."""
@@ -634,9 +628,6 @@ elif page == 'Transfers':
     if w0['inn']:
         for o, i in pairs(dict(out=w0['out'], inn=w0['inn'])):
             html(f'<div class="move">{move_card(o, "out", gws)}<div class="arrow">→</div>{move_card(i, "in", gws)}</div>')
-        if chip == 'None' and st.button(f'✅ I\'ve made these in the FPL app…', key='made_from_transfers', type='primary',
-                                        help=f'Saves them as your GW{g} team, so every tab uses it'):
-            confirm_dialog([(int(o), int(i)) for o, i in pairs(dict(out=w0['out'], inn=w0['inn']))], st.session_state.get('made', []), team, g)
     else:
         html('<div class="card" style="padding:14px"><div class="v g" style="font-size:1.1rem">Hold this week</div><div class="l" style="font-size:.88rem">No move gains enough now. '
              f'Saving the transfer gives you {min(team["free_transfers"] + 1, 5)} next week.</div></div>')
@@ -842,13 +833,6 @@ elif page == 'Planner':
     else:
         html('<div class="note" style="margin:6px 0">No changes yet. Pick a player to sell and a replacement, or start from the suggestion. '
              'Changes in GW11 carry into GW12 and GW13, just like real transfers.</div>')
-
-    gw1_moves = [m for m in moves if m['gw'] == PG[0]]
-    if gw1_moves and st.button(f'✅ I\'ve made my GW{PG[0]} changes in the FPL app ({len(gw1_moves)})…', key='made_from_planner', type='primary',
-                               help=f'Saves them as your GW{PG[0]} team on every tab. Your later-week plans stay.'):
-        later = [m for m in moves if m['gw'] != PG[0]]
-        confirm_dialog([(int(m['out']), int(m['inn'])) for m in gw1_moves], st.session_state.get('made', []), team, PG[0],
-                       after=lambda: st.session_state.__setitem__('pl_moves', later))
 
     # ---- totals
     pts = lambda sq_, gw_: (lambda lu: P.loc[lu[0], f'xp_{gw_}'].sum() + P.loc[lu[1], f'xp_{gw_}'])(lineup(tuple(sorted(sq_)), gw_, BOOST))
