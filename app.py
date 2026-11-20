@@ -291,7 +291,32 @@ def remember(key, qp):
         st.session_state[key] = st.session_state[store]          # the box was wiped while you were on another tab: put the value back
 
 
+def parse_team_id(text):
+    """The team ID from whatever was typed: the number itself, or any FPL link containing /entry/<id>/."""
+    import re
+    t = str(text or '').strip()
+    m = re.search(r'/entry/(\d+)', t) or re.fullmatch(r'#?(\d+)', t) or re.search(r'(\d{3,})', t)
+    return m.group(1) if m else t
+
+
+def set_team_id(v):
+    """Used by 'find your team in a league': fill the team ID box and remember it."""
+    st.session_state['eid'] = str(v); remember_save('eid', 'team')
+
+
+@st.cache_data(ttl=1800, show_spinner='Searching the league...')
+def league_entries(lid_, pages=20):
+    """Every team in a classic league (first `pages` x 50), for finding your own team by name."""
+    out = []
+    for p_ in range(1, pages + 1):
+        d_ = fe.get(f'leagues-classic/{int(lid_)}/standings/?page_standings={p_}')
+        out += [(r['entry'], r['entry_name'], r['player_name']) for r in d_['standings']['results']]
+        if not d_['standings'].get('has_next'): break
+    return d_['league']['name'], out
+
+
 def remember_save(key, qp):
+    if key == 'eid': st.session_state['eid'] = parse_team_id(st.session_state.get('eid', ''))   # a pasted FPL link becomes the ID
     v = str(st.session_state.get(key, '')).strip(); st.session_state[f'_{key}'] = v
     if v.isdigit(): st.query_params[qp] = v
     elif qp in st.query_params: del st.query_params[qp]
@@ -344,12 +369,29 @@ with st.sidebar:
          f'<div class="note">Gameweek {G0} deadline in <b style="color:#00ff87">{countdown}</b></div>')
     st.write('')
     team = None
-    eid = st.text_input('Your FPL team ID', placeholder='e.g. 1234567', key='eid', help='On the FPL website open Points. The number after /entry/ in the address is your ID.',
+    eid = st.text_input('Your FPL team ID', placeholder='ID or paste your FPL Points link', key='eid',
+                        help='On the FPL website open Points: the number after /entry/ in the address is your ID. You can paste the whole link here.',
                         on_change=remember_save, args=('eid', 'team'))
     if eid.strip().isdigit():
         try: team = load_team(int(eid), boot)
         except requests.HTTPError: st.error('No team found with that ID.')
         except Exception as e: st.error(f'Could not load the team ({e}).')
+    elif eid.strip(): st.error('That does not look like a team ID. Paste your FPL Points link or type the number.')
+    if team is None:
+        # FPL has no public search by team name, but a league's table can be searched: find yourself in any league you are in
+        with st.expander("Don't know your ID? Find your team in a league"):
+            st.caption('Open Leagues on the FPL website, pick any league you are in: the number after /leagues/ in the address is its ID.')
+            f_lid = st.text_input('League ID', value=str(st.session_state.get('_lid', '') or ''), key='find_lid', placeholder='e.g. 314')
+            f_q = st.text_input('Your team or manager name', key='find_q', placeholder='e.g. Solio Moose')
+            if f_lid.strip().isdigit() and len(f_q.strip()) >= 2:
+                try:
+                    lname, ents = league_entries(f_lid.strip())
+                    q_ = f_q.strip().lower(); hits_ = [e_ for e_ in ents if q_ in e_[1].lower() or q_ in e_[2].lower()][:8]
+                    st.caption(f'{lname} · {len(ents)} teams searched' + (' (the first 1,000)' if len(ents) >= 1000 else ''))
+                    for e_, tn_, mn_ in hits_:
+                        st.button(f'{tn_} · {mn_}', key=f'find_{e_}', use_container_width=True, on_click=set_team_id, args=(e_,))
+                    if not hits_: st.caption('No team with that name in this league.')
+                except Exception: st.error('Could not load that league. Check the ID (classic leagues only).')
     if team is not None:
         # ---- transfers already made in the FPL app for the coming gameweek (FPL keeps them private until the deadline, so you tell us)
         tid = str(st.session_state.get('eid', 'manual'))
@@ -651,10 +693,17 @@ elif page == 'Transfers':
 # ================================================================== COMPARE
 elif page == 'Compare':
     G2 = ALL_GWS[:6]
-    default = (sorted([int(i) for i in team['squad'].id], key=lambda i: -P.loc[i, f'xp_{G0}'])[:2] if team else list(P[P.status != 'u'].nlargest(2, f'xp_{G0}').index))
-    c1, c2 = st.columns([3, 1])
-    cmp_ = c1.multiselect('Players to compare (up to 4)', P[P.status != 'u'].sort_values(f'h3', ascending=False).index.tolist(), default=default,
-                          format_func=LAB.get, max_selections=4, key='cmp')
+    # players are compared within one position: the stats that earn points differ by position (saves for keepers, goals for forwards...)
+    mine_ = [int(i) for i in team['squad'].id] if team else []
+    top_ = max(mine_, key=lambda i: P.loc[i, f'xp_{G0}']) if mine_ else int(P[P.status != 'u'][f'xp_{G0}'].idxmax())
+    c0, c1, c2 = st.columns([1.4, 3, 1])
+    pos_lab = c0.segmented_control('Position', ['GK', 'DEF', 'MID', 'FWD'], default=POS[P.pos[top_]], key='cmp_pos') or POS[P.pos[top_]]
+    pnum = {v: k for k, v in POS.items()}[pos_lab]
+    pool = P[(P.status != 'u') & (P.pos == pnum)]
+    mine_p = sorted([i for i in mine_ if P.pos[i] == pnum], key=lambda i: -P.loc[i, f'xp_{G0}'])
+    default = mine_p[:2] if len(mine_p) >= 2 else list(pool.nlargest(2, f'xp_{G0}').index)
+    cmp_ = c1.multiselect(f'{pos_lab} to compare (up to 4)', pool.sort_values('h3', ascending=False).index.tolist(), default=default,
+                          format_func=LAB.get, max_selections=4, key=f'cmp_{pos_lab}')
     gsel = c2.segmented_control('Gameweek', [f'GW{g}' for g in G2[:3]], default=f'GW{G0}', key='cmp_gw') or f'GW{G0}'
     g = int(gsel[2:])
     if not cmp_:
@@ -1501,7 +1550,7 @@ else:
                    ('5 seasons', 'of game-by-game history, 2022-23 to now', 'c'), ('< 1 sec', 'to search every legal squad', '')]))
     st.markdown("""
 #### What it predicts
-For every player and every fixture, his **expected FPL points**. A double gameweek adds both fixtures and a blank gives zero.
+For every player and every fixture, their **expected FPL points**. A double gameweek adds both fixtures and a blank gives zero.
 Your projected gameweek score is the best legal XI from your 15, with the captain doubled.
 
 #### The model

@@ -16,7 +16,7 @@ CASES = []
 for page in ['My team', 'Transfers', 'Planner', 'Captain', 'Chips', 'League', 'Compare', 'Players', 'Teams', 'Review', 'How it works']:
     for setup in ('none', 'id'): CASES.append((page, setup, {}))
 CASES += [('Transfers', 'id', {'chip': 'Wildcard'}), ('Transfers', 'id', {'chip': 'Free Hit'}), ('Transfers', 'id', {'plan': '1 GW'}), ('Transfers', 'id', {'hits': True}), ('Transfers', 'id', {'chip': 'Wildcard', 'plan': '2 GWs'}),
-          ('Players', 'none', {'hz_pl': 'Next 2'}), ('My team', 'id', {'boost': 30}), ('Compare', 'none', {'cmp': [411, 379, 1, 4], 'cmp_gw': 'GW12'}), ('Compare', 'none', {'cmp': []}), ('Teams', 'none', {'tf_sort': 'Defence (xG against)'}), ('League', 'id', {'_lid': '5508'}), ('Review', 'id', {'rv_gw': 3}), ('Review', 'id', {'rv_gw': 10}), ('Review', 'id', {'rv_sort': 'Fell short most'}), ('Review', 'none', {'rv_sort': 'Beat prediction most', 'rv_played': False}),
+          ('Players', 'none', {'hz_pl': 'Next 2'}), ('My team', 'id', {'boost': 30}), ('Compare', 'none', {'cmp_pos': 'FWD', 'cmp_FWD': [411, 379], 'cmp_gw': 'GW12'}), ('Compare', 'none', {'cmp_FWD': []}), ('Teams', 'none', {'tf_sort': 'Defence (xG against)'}), ('League', 'id', {'_lid': '5508'}), ('Review', 'id', {'rv_gw': 3}), ('Review', 'id', {'rv_gw': 10}), ('Review', 'id', {'rv_sort': 'Fell short most'}), ('Review', 'none', {'rv_sort': 'Beat prediction most', 'rv_played': False}),
           ('My team', 'id', {'made': [(569, 79)], '_made_for': '1'}), ('Transfers', 'id', {'made': [(569, 79), (8, 112)], '_made_for': '1'}),
           ('Planner', 'id', {'made': [(569, 79)], '_made_for': '1'}), ('My team', 'id', {'made': [(569, 411)], '_made_for': '1'}), ('My team', 'id', {'made': [(569, 379), (8, 4)], '_made_for': '1'}), ('League', 'id', {'_lid': '5508', 'h2h_hz': 'Next 3'}), ('League', 'none', {'_lid': '5508'}), ('League', 'id', {'_lid': '1757', 'lstyle': 'Chase'}), ('League', 'id', {'_lid': '999999999'}),
           ('Planner', 'id', {'pl_team': ('Solio Moose', TEAM1), 'pl_moves': [dict(gw=11, out=569, inn=79)]}),
@@ -25,7 +25,7 @@ CASES += [('Transfers', 'id', {'chip': 'Wildcard'}), ('Transfers', 'id', {'chip'
           ('Planner', 'id', {'pl_team': ('Solio Moose', TEAM1), 'pl_moves': [dict(gw=12, out=79, inn=379)]}),
           ('Planner', 'id', {'pl_team': ('Solio Moose', TEAM1), 'pl_moves': [], 'pl_lineup': {11: dict(bench=[302, 166, 277, 173], cap=154, vice=411)}}),
           ('Planner', 'id', {'pl_team': ('Solio Moose', TEAM1), 'pl_moves': [dict(gw=11, out=166, inn=79)], 'pl_lineup': {11: dict(bench=[302, 166, 277, 173], cap=411, vice=154)}}),
-          ('Transfers', 'id', {'plan': '2 GWs'}), ('Compare', 'none', {'cmp': [202, 60, 411]}),
+          ('Transfers', 'id', {'plan': '2 GWs'}), ('Compare', 'none', {'cmp_pos': 'GK', 'cmp_GK': [496, 57, 1]}), ('Compare', 'id', {'cmp_pos': 'DEF'}), ('Compare', 'id', {'cmp_pos': 'MID'}),
            ('Players', 'none', {'hz_pl': 'Next 3'}), ('My team', 'id', {'hz_team': 'Next 3'})]
 fails = 0
 for page, setup, extra in CASES:
