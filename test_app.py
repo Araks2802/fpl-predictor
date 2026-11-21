@@ -13,7 +13,7 @@ for p, n in {1: 2, 2: 5, 3: 5, 4: 3}.items():
 import json as _j, fpl_engine as _fe
 TEAM1 = tuple(sorted(int(i) for i in _fe.load_entry(1, _j.load(open('data/2026-27/bootstrap.json')))['squad'].id))
 CASES = []
-for page in ['My team', 'Transfers', 'Planner', 'Captain', 'Chips', 'League', 'Compare', 'Players', 'Teams', 'Review', 'How it works']:
+for page in ['Live', 'My team', 'Transfers', 'Planner', 'Captain', 'Chips', 'League', 'Compare', 'Players', 'Teams', 'Review', 'How it works']:
     for setup in ('none', 'id'): CASES.append((page, setup, {}))
 CASES += [('Transfers', 'id', {'chip': 'Wildcard'}), ('Transfers', 'id', {'chip': 'Free Hit'}), ('Transfers', 'id', {'plan': '1 GW'}), ('Transfers', 'id', {'hits': True}), ('Transfers', 'id', {'chip': 'Wildcard', 'plan': '2 GWs'}),
           ('Players', 'none', {'hz_pl': 'Next 2'}), ('My team', 'id', {'boost': 30}), ('Compare', 'none', {'cmp_pos': 'FWD', 'cmp_FWD': [411, 379], 'cmp_gw': 'GW12'}), ('Compare', 'none', {'cmp_FWD': []}), ('Teams', 'none', {'tf_sort': 'Defence (xG against)'}), ('League', 'id', {'_lid': '5508'}), ('Review', 'id', {'rv_gw': 3}), ('Review', 'id', {'rv_gw': 10}), ('Review', 'id', {'rv_sort': 'Fell short most'}), ('Review', 'none', {'rv_sort': 'Beat prediction most', 'rv_played': False}),
@@ -26,7 +26,7 @@ CASES += [('Transfers', 'id', {'chip': 'Wildcard'}), ('Transfers', 'id', {'chip'
           ('Planner', 'id', {'pl_team': ('Solio Moose', TEAM1), 'pl_moves': [], 'pl_lineup': {11: dict(bench=[302, 166, 277, 173], cap=154, vice=411)}}),
           ('Planner', 'id', {'pl_team': ('Solio Moose', TEAM1), 'pl_moves': [dict(gw=11, out=166, inn=79)], 'pl_lineup': {11: dict(bench=[302, 166, 277, 173], cap=411, vice=154)}}),
           ('Transfers', 'id', {'plan': '2 GWs'}), ('Compare', 'none', {'cmp_pos': 'GK', 'cmp_GK': [496, 57, 1]}), ('Compare', 'id', {'cmp_pos': 'DEF'}), ('Compare', 'id', {'cmp_pos': 'MID'}),
-           ('Players', 'none', {'hz_pl': 'Next 3'}), ('My team', 'id', {'hz_team': 'Next 3'})]
+           ('Players', 'none', {'hz_pl': 'Next 3'}), ('Live', 'id', {'_lid': '5508'}), ('My team', 'id', {'hz_team': 'Next 3'})]
 fails = 0
 for page, setup, extra in CASES:
     at = AppTest.from_file('app.py', default_timeout=240)

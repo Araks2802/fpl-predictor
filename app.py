@@ -103,7 +103,16 @@ def run_opt(squad_json, bank, ft, k, chip, roll, banned, keep, gws, boost=0.0):
     return fe.optimise(P, list(gws), sq, bank, ft, max_transfers=k, chip=chip, roll_value=roll, banned=list(banned), forced=list(keep))
 
 
-P, meta, boot, ALL_GWS = load(); G0 = ALL_GWS[0]; P = P.copy()
+P, meta, boot, ALL_GWS = load(); P = P.copy()
+# ---- which gameweek is next, from the deadlines: the moment a deadline passes the app moves on to the next gameweek by itself,
+# without waiting for the update job (the prediction file already covers every remaining gameweek).
+# FPL_NOW=2026-11-21T14:00:00Z pretends it is another time (for testing).
+import os
+NOW = datetime.fromisoformat(os.environ['FPL_NOW'].replace('Z', '+00:00')) if os.environ.get('FPL_NOW') else datetime.now(timezone.utc)
+DL = {e['id']: datetime.fromisoformat(e['deadline_time'].replace('Z', '+00:00')) for e in boot['events'] if e.get('deadline_time')}
+ALL_GWS = [g for g in ALL_GWS if g not in DL or DL[g] > NOW] or ALL_GWS[-1:]
+G0 = ALL_GWS[0]
+LIVE_GW = max((g for g, d in DL.items() if d <= NOW), default=None)     # the latest gameweek whose deadline has passed (live, or just finished)
 with st.sidebar.expander('Model settings'):
     BOOST = st.slider('Form boost', 0, 50, 0, 5, format='%d%%', key='boost',
                       help='Mixes FPL form (points per match over the last 30 days) into every projection. Testing on unseen gameweeks found 0% predicts best: hot streaks mostly fade.') / 100
@@ -112,8 +121,37 @@ if BOOST:
     for k, g in enumerate(ALL_GWS):
         nfix = P[f'opp_{g}'].map(lambda o: 0 if o == '-' else o.count(',') + 1)
         P[f'xp_{g}'] = P[f'xp_{g}'] + BOOST * (P.form * nfix * (1 - (1 - c) * 0.5 ** k) - P[f'xp_{g}'])
-deadline = datetime.fromisoformat(meta['deadline'].replace('Z', '+00:00'))
-left = deadline - datetime.now(timezone.utc)
+@st.cache_data(ttl=60, show_spinner=False)
+def live_data(g_):
+    """FPL's live data and fixtures for a gameweek. Shared by every visitor and fetched at most once a minute."""
+    import fpl_live as fl
+    return fl.load(g_)
+
+
+@st.cache_data(ttl=120, show_spinner='Loading your league\'s live scores...')
+def live_league(lid_, g_, n_=20):
+    """The top n_ of a classic league with each manager's picks for gameweek g_ (public once its deadline has passed)."""
+    from concurrent.futures import ThreadPoolExecutor
+    d_ = fe.get(f'leagues-classic/{int(lid_)}/standings/'); rows_ = d_['standings']['results'][:n_]
+    def one(r):
+        try: pk_ = fe.get(f'entry/{r["entry"]}/event/{g_}/picks/')
+        except Exception: pk_ = None
+        return dict(entry=r['entry'], entry_name=r['entry_name'], player_name=r['player_name'], rank=r['rank'], total=r['total'], event_total=r['event_total'], picks=pk_)
+    with ThreadPoolExecutor(max_workers=6) as pool_: ms_ = list(pool_.map(one, rows_))
+    return dict(name=d_['league']['name'], managers=ms_)
+
+
+# is the latest gameweek still being played? (deadline passed and some of its matches not finished)
+LIVE_WINDOW = LIVE_ON = False
+if LIVE_GW:
+    try:
+        import fpl_live as _fl
+        _st = [_fl.fixture_state(f_) for f_ in live_data(LIVE_GW)[1]]
+        LIVE_WINDOW = any(s_ != 'finished' for s_ in _st); LIVE_ON = 'live' in _st
+    except Exception:
+        pass
+deadline = DL.get(G0) or datetime.fromisoformat(meta['deadline'].replace('Z', '+00:00'))
+left = deadline - NOW
 countdown = f'{left.days}d {left.seconds // 3600}h' if left.total_seconds() > 0 else 'deadline passed'
 HORIZONS = {'Next GW': 1, 'Next 2': 2, 'Next 3': 3, 'Next 6': 6, 'Season': len(ALL_GWS)}   # Season = all remaining gameweeks
 for n in HORIZONS.values(): P[f'h{n}'] = sum(P[f'xp_{g}'] for g in ALL_GWS[:n])
@@ -477,11 +515,13 @@ def _ago(t):
     m = (datetime.now(timezone.utc) - datetime.fromisoformat(t)).total_seconds() / 60
     return f'{m:.0f} min ago' if m < 90 else (f'{m / 60:.0f} h ago' if m < 48 * 60 else f'{m / 1440:.0f} days ago')
 updated_pill = (f'<span class="pill">Updated {_ago(meta["updated_at"])}' + (' · late team news' if meta.get('update_type', '').startswith('late') else '') + '</span>') if meta.get('updated_at') else ''
+if LIVE_WINDOW: updated_pill += f'<span class="pill" style="border-color:#00ff87;color:#00ff87">● GW{LIVE_GW} {"live now" if LIVE_ON else "in progress"} · predictions update after its results</span>'
 sub = (f"{team['manager']} · {team['points']} pts · rank {team['rank']:,}" if team and team.get('rank') else 'Projected points, best XI, captain and transfers for the coming gameweek')
 html(f'<div class="hero"><div class="hero-title">{ui.esc(team["name"]) if team else "Your FPL team,"} <span>{"GW" + str(G0) if team else "projected."}</span></div>'
      f'<div class="hero-sub">{ui.esc(sub)}</div>'
      f'<span class="pill g">GW{G0} · {deadline.astimezone(UK):%a %d %b %H:%M} UK time</span><span class="pill">Deadline in {countdown}</span>{updated_pill}</div>')
-page = st.segmented_control('Page', ['My team', 'Transfers', 'Planner', 'Captain', 'Chips', 'League', 'Compare', 'Players', 'Teams', 'Review', 'How it works'], default='My team', label_visibility='collapsed', key='nav') or 'My team'
+PAGES = (['Live'] if LIVE_GW else []) + ['My team', 'Transfers', 'Planner', 'Captain', 'Chips', 'League', 'Compare', 'Players', 'Teams', 'Review', 'How it works']
+page = st.segmented_control('Page', PAGES, default='Live' if LIVE_WINDOW else 'My team', label_visibility='collapsed', key='nav') or ('Live' if LIVE_WINDOW else 'My team')
 
 
 def done():
@@ -622,8 +662,150 @@ def pairs(res):
     return out
 
 
+# ================================================================== LIVE: the gameweek being played (or just finished), from FPL's live data
+if page == 'Live':
+    import fpl_live as fl
+    g = LIVE_GW
+    team_of = {e['id']: e['team'] for e in boot['elements']}; pos_of = {e['id']: e['element_type'] for e in boot['elements']}
+    sn = {t['id']: t['short_name'] for t in boot['teams']}
+
+    @st.cache_data(ttl=300, show_spinner=False)
+    def live_picks(eid_, g_):
+        try: return fe.get(f'entry/{int(eid_)}/event/{g_}/picks/')
+        except Exception: return None
+
+    @st.cache_data(ttl=300, show_spinner=False)
+    def live_entry(eid_):
+        try: return fe.get(f'entry/{int(eid_)}/')
+        except Exception: return None
+
+    @st.cache_data(ttl=3600, show_spinner=False)
+    def predicted_for(g_):
+        """What the app predicted for each player that week: the pre-deadline snapshot, or the back-test for early weeks."""
+        f_ = ROOT / 'data' / 'snapshots' / f'gw{g_}.parquet'
+        if f_.exists():
+            s_ = pd.read_parquet(f_); return s_['xp'].to_dict() if 'xp' in s_ else {}
+        try:
+            bt = pd.read_csv(ROOT / 'models' / 'test_predictions.csv'); bt = bt[(bt.season == '2026-27') & (bt.gw == g_)]
+            return bt.groupby('element').blend.sum().to_dict()
+        except Exception: return {}
+
+    @st.fragment(run_every=60 if LIVE_ON else None)
+    def live_view():
+        live, fx = live_data(g)
+        pl = fl.players(live, fx, team_of)
+        states = [fl.fixture_state(f) for f in fx]
+        n_live, n_done, n_todo = states.count('live'), states.count('finished'), states.count('not started')
+        html(f'<div class="note" style="margin:-4px 0 10px 0"><b style="color:#fff">GW{g} {"live" if n_live else ("final" if not n_todo else "in progress")}</b> · '
+             f'{n_live} match{"es" if n_live != 1 else ""} in play · {n_done} finished · {n_todo} still to play'
+             + (' · updates every minute' if n_live else '') + f' · checked {NOW.astimezone(UK) if os.environ.get("FPL_NOW") else datetime.now(UK):%H:%M} UK time</div>')
+        pred = predicted_for(g)
+        eid_ = str(st.session_state.get('eid', '') or '').strip()
+        pk = live_picks(eid_, g) if eid_.isdigit() else None
+        if pk:
+            hits = (pk.get('entry_history') or {}).get('event_transfers_cost', 0) or 0
+            t = fl.team_score(pk['picks'], pk.get('active_chip'), pl, pos_of, hits=hits)
+            rows = {r['id']: r for r in t['rows']}
+            orig = {p['element']: p for p in pk['picks']}
+            cm = 3 if pk.get('active_chip') == '3xc' else 2
+            pred_total = sum(pred.get(i, 0) * (cm if orig[i]['is_captain'] else (1 if orig[i]['position'] <= 11 or pk.get('active_chip') == 'bboost' else 0)) for i in orig) - hits
+            en = live_entry(eid_) or {}
+            prov = sum(pl.get(r['id'], {}).get('bonus_prov', 0) * r['mult'] for r in t['rows'])
+            chip_ = {'bboost': 'Bench Boost', '3xc': 'Triple Captain', 'freehit': 'Free Hit', 'wildcard': 'Wildcard', 'manager': 'Assistant Manager'}.get(pk.get('active_chip'))
+            sec(f'Your GW{g} score', 'live, after hits' + (f' · {chip_}' if chip_ else ''))
+            html(ui.cards([(f'{t["total"]:.0f}', 'points so far' + (f' (incl. {prov} provisional bonus)' if prov else '') + (f' · after −{hits} hit' if hits else ''), 'g'),
+                           (f'{t["playing"]} · {t["left"]}', 'players playing now · still to play', 'c'),
+                           (f'{pred_total:.0f}', 'what the model predicted for your team', ''),
+                           (f'{en.get("summary_event_rank"):,}' if en.get('summary_event_rank') else '-', 'your GW rank on FPL (FPL updates it every so often)', '')]))
+            # the pitch: the players who count now (after any automatic subs), captain multiplied
+            counting = [r['id'] for r in t['rows'] if r['mult'] > 0]; rest_ = [r['id'] for r in t['rows'] if r['mult'] == 0]
+            def stat_txt(i):
+                s_ = pl.get(i, {}); st_ = s_.get('status', 'no match')
+                if st_ == 'not started':
+                    ko = [f_['kickoff_time'] for f_ in fx if f_['id'] in s_.get('fixtures', [])]
+                    return (datetime.fromisoformat(ko[0].replace('Z', '+00:00')).astimezone(UK).strftime('%a %H:%M') if ko and ko[0] else 'to play')
+                if st_ == 'live': return f"playing · {s_.get('mins', 0)}'"
+                if st_ == 'finished': return f"done · {s_.get('mins', 0)}'"
+                return 'no match'
+            val = {i: rows[i]['pts'] * max(rows[i]['mult'], 1) for i in rows}
+            P_live = P.assign(chance=100)
+            html(ui.pitch(P_live, [i for i in counting if i in P.index], [i for i in rest_ if i in P.index], t['cap_now'], next((r['id'] for r in t['rows'] if r['vice']), None),
+                          val, {i: stat_txt(i) for i in rows}, mark_in=[b_ for _, b_ in t['subs']], mark_out=[s_ for s_, _ in t['subs']], whole=True))
+            notes = []
+            for s_, b_ in t['subs']: notes.append(f'<b style="color:#fff">{ui.esc(P.name[b_])}</b> comes on for <b style="color:#fff">{ui.esc(P.name[s_])}</b> (did not play)')
+            if t['cap_now'] != t['cap'] and t['cap'] in P.index: notes.append(f'<b style="color:#fff">{ui.esc(P.name[t["cap_now"]])}</b> takes the armband: {ui.esc(P.name[t["cap"]])} did not play')
+            html('<div class="note" style="margin-top:4px">' + (' · '.join(notes) + '. ' if notes else '') +
+                 'Green: came on as an automatic sub · the captain\'s points are multiplied. Bonus is provisional (from the live BPS) until FPL adds it, about an hour after each match.</div>')
+            # every player: how he got his points, against what the model predicted
+            body = ''
+            for r in sorted(t['rows'], key=lambda r: (r['mult'] == 0, -r['pts'] * max(r['mult'], 1))):
+                i = r['id']
+                if i not in P.index: continue
+                s_ = pl.get(i, {}); how = ' · '.join(f'{n_} {v:+d}' if v < 0 else f'{n_} {v}' for n_, v in s_.get('lines', [])) or '-'
+                role = 'Captain' if r['cap_now'] else ('Vice' if r['vice'] else ('Bench' if r['mult'] == 0 else 'Starter'))
+                body += (f'<tr style="{"opacity:.55" if r["mult"] == 0 else ""}"><td><div class="who"><img src="{ui.shirt(P.team_code[i], P.pos[i] == 1)}"><div><b>{ui.esc(P.name[i])}</b>'
+                         f'<div class="t">{P.team[i]} · {role}{" ×" + str(r["mult"]) if r["mult"] > 1 else ""}</div></div></div></td><td>{stat_txt(i)}</td>'
+                         f'<td style="font-size:.8rem">{ui.esc(how)}</td><td>{pred.get(i, 0):.1f}</td><td><b style="color:{ui.GREEN}">{r["pts"] * max(r["mult"], 1):.0f}</b></td></tr>')
+            html('<table class="fpl"><tr><th>Player</th><th>Status</th><th>How he scored</th><th>Predicted</th><th>Points</th></tr>' + body + '</table>')
+        elif eid_.isdigit():
+            html(f'<div class="note">Your GW{g} picks are not available from FPL yet.</div>')
+        else:
+            html('<div class="note">Add your team ID in the sidebar to see your live score.</div>')
+
+        # ---- the matches
+        sec(f'GW{g} matches', 'live scores · bonus points leaders (provisional until FPL adds the bonus)')
+        el_name = {e['id']: e['web_name'] for e in boot['elements']}
+        cards_ = ''
+        for f_, st_ in sorted(zip(fx, states), key=lambda x: ({'live': 0, 'finished': 2, 'not started': 1}[x[1]], x[0]['kickoff_time'] or '')):
+            ko = datetime.fromisoformat(f_['kickoff_time'].replace('Z', '+00:00')).astimezone(UK) if f_.get('kickoff_time') else None
+            score = f"{f_['team_h_score']} - {f_['team_a_score']}" if f_.get('started') else (f'{ko:%a %H:%M}' if ko else 'TBC')
+            tag = f"<span style='color:#00ff87'>● {f_.get('minutes', 0)}'</span>" if st_ == 'live' else ('FT' if st_ == 'finished' else 'to play')
+            bps = fl._stat(f_, 'bps', 'h') | fl._stat(f_, 'bps', 'a')
+            off = fl._stat(f_, 'bonus', 'h') | fl._stat(f_, 'bonus', 'a'); bon = off or fl.bonus_from_bps(bps)
+            lead = ' · '.join(f'{ui.esc(el_name.get(p_, "?"))} {b_}' for p_, b_ in sorted(bon.items(), key=lambda x: -x[1])) if f_.get('started') else ''
+            cards_ += (f'<div class="card" style="padding:10px 12px"><div class="l" style="margin:0">{tag}</div><div class="v" style="font-size:1.15rem;margin:2px 0">'
+                       f'{sn.get(f_["team_h"], "?")} <span style="color:#00ff87">{score}</span> {sn.get(f_["team_a"], "?")}</div>'
+                       + (f'<div class="l" style="font-size:.75rem">Bonus{"" if off else " (provisional)"}: {lead}</div>' if lead else '') + '</div>')
+        html(f'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px">{cards_}</div>')
+
+        # ---- your mini-league, live
+        lid_ = str(st.session_state.get('_lid', '') or '').strip()
+        if lid_.isdigit():
+            sec('Your mini-league, live', 'the top 20: their live GW score and where they would be now')
+            try:
+                lg = live_league(lid_, g)
+                rows_l = []
+                for m in lg['managers']:
+                    pk_ = m['picks']
+                    if not pk_: continue
+                    hits_ = (pk_.get('entry_history') or {}).get('event_transfers_cost', 0) or 0
+                    t_ = fl.team_score(pk_['picks'], pk_.get('active_chip'), pl, pos_of, hits=hits_)
+                    cap_ = t_['cap_now']
+                    rows_l.append(dict(entry=m['entry'], team=m['entry_name'], manager=m['player_name'], rank=m['rank'], before=m['total'] - m['event_total'],
+                                       live=t_['total'], left=t_['left'], cap=P.name.get(cap_, '?') if cap_ else '-', chip=pk_.get('active_chip')))
+                Lr = pd.DataFrame(rows_l)
+                if len(Lr):
+                    Lr['now'] = Lr.before + Lr.live; Lr = Lr.sort_values('now', ascending=False).reset_index(drop=True); Lr['live_rank'] = Lr.index + 1
+                    me_ = int(eid_) if eid_.isdigit() else None
+                    body = ''.join(
+                        f'<tr style="{"background:rgba(0,255,135,.08)" if r.entry == me_ else ""}"><td><b>{r.live_rank}</b> '
+                        f'<span style="color:{ui.GREEN if r.live_rank < r["rank"] else (ui.PINK if r.live_rank > r["rank"] else "#b9a7c2")}">'
+                        f'{"▲" if r.live_rank < r["rank"] else ("▼" if r.live_rank > r["rank"] else "·")}</span></td>'
+                        f'<td><b>{ui.esc(r.team)}</b><div class="t" style="color:#b9a7c2;font-size:.75rem">{ui.esc(r.manager)}</div></td>'
+                        f'<td><b style="color:{ui.GREEN}">{r.live:.0f}</b></td><td>{r.now:.0f}</td><td>{ui.esc(r.cap)}</td><td>{r.left}</td>'
+                        f'<td>{ {"bboost": "BB", "3xc": "TC", "freehit": "FH", "wildcard": "WC"}.get(r.chip, "") }</td></tr>' for _, r in Lr.iterrows())
+                    html('<table class="fpl"><tr><th>Live rank</th><th>Team</th><th>GW live</th><th>Total</th><th>Captain</th><th>Still to play</th><th>Chip</th></tr>' + body + '</table>')
+                    html(f'<div class="note" style="margin-top:4px">{lg["name"]}. ▲▼ compare with the league table before this gameweek.</div>')
+            except Exception as e_:
+                st.caption(f'Could not load the league live ({e_}).')
+        else:
+            html('<div class="note" style="margin-top:6px">Add your mini-league ID on the League tab to follow it live here.</div>')
+
+    live_view()
+
+
 # ================================================================== MY TEAM
-if page == 'My team':
+elif page == 'My team':
     if team is None: need_team(); done()
     ids = tuple(int(i) for i in team['squad'].id)
     gw_lab = st.segmented_control('Gameweek', [f'GW{g}' for g in ALL_GWS[:6]], default=f'GW{G0}', label_visibility='collapsed') or f'GW{G0}'
@@ -1037,9 +1219,9 @@ elif page == 'League':
              'aimed at climbing your league. Add your own team ID in the sidebar too, so the app knows which manager is you.</div></div>'); done()
 
     @st.cache_data(ttl=1800, show_spinner='Loading the league and every rival\'s team...')
-    def get_league(lid_, mx_):
-        return fe.load_league(int(lid_), boot, mx_)
-    try: L = get_league(lid.strip(), mx)
+    def get_league(lid_, mx_, cur_):
+        return fe.load_league(int(lid_), boot, mx_, cur=cur_)
+    try: L = get_league(lid.strip(), mx, LIVE_GW)
     except requests.HTTPError: st.error('No classic league found with that ID. Head-to-head leagues are not supported yet.'); done()
     except Exception as e: st.error(f'Could not load the league ({e}).'); done()
     me_id = int(st.session_state['eid']) if team is not None and str(st.session_state.get('eid', '')).isdigit() else None
@@ -1392,7 +1574,9 @@ elif page == 'Review':
         """For every finished gameweek: each player's predicted points and chances, and what actually happened.
         Weeks with a snapshot use exactly what the app showed before the deadline; GW3-10 use the back-test (a model that never saw those weeks)."""
         H = pd.read_csv(ROOT / 'data' / '2026-27' / 'history.csv', low_memory=False)
-        done_gws = {e['id'] for e in boot['events'] if e['finished']}
+        # finished gameweeks whose results are downloaded: between FPL marking a week finished and the next full download it is not shown
+        # (otherwise every player would show 0 points)
+        done_gws = {e['id'] for e in boot['events'] if e['finished']} & set(H['round'].unique())
         act = H[H['round'].isin(done_gws)].groupby(['round', 'element']).agg(
             actual=('total_points', 'sum'), minutes=('minutes', 'sum'), goals=('goals_scored', 'sum'), assists=('assists', 'sum'),
             bonus=('bonus', 'sum'), cs=('clean_sheets', 'sum'), fixtures=('fixture', 'count')).reset_index().rename(columns={'round': 'gw'})

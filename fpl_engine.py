@@ -63,12 +63,16 @@ def load_entry(eid, boot):
     ev = [e for e in boot['events'] if e['finished'] or e['is_current']]
     cur = max(e['id'] for e in ev if e['finished']) if any(e['finished'] for e in ev) else 1
     entry = get(f'entry/{eid}/'); hist = get(f'entry/{eid}/history/')
+    # the latest gameweek you have played, from your own history: once a deadline passes, that week (and its transfers) is
+    # public and in your history even while its matches are still being played, so the squad and free transfers are for the next week
+    if hist.get('current'): cur = max(cur, max(r['event'] for r in hist['current']))
     chips = {c['event']: c['name'] for c in hist['chips']}
     # the squad: use the last finished gameweek, but skip back past a Free Hit week (its squad is temporary)
     gw = cur
     while chips.get(gw) == 'freehit' and gw > 1: gw -= 1
     picks = get(f'entry/{eid}/event/{gw}/picks/')
-    bank = hist['current'][-1]['bank']
+    # the bank of the squad week (after a Free Hit your squad and money go back to the week before it)
+    bank = next((r['bank'] for r in hist['current'] if r['event'] == gw), hist['current'][-1]['bank'] if hist['current'] else 0)
     transfers = get(f'entry/{eid}/transfers/')
     fh_weeks = {e for e, n in chips.items() if n == 'freehit'}
     el = {e['id']: e for e in boot['elements']}
@@ -350,22 +354,26 @@ def optimise_plan(P, gws, squad, bank, ft, allow_hits=False, max_hits_per_week=1
 
 
 # ------------------------------------------------------------------ mini-leagues
-def load_league(lid, boot, max_managers=30):
+def load_league(lid, boot, max_managers=30, cur=None):
     """A classic league's standings and, for the top max_managers, each manager's latest squad, captain and chips.
 
     Rivals' transfers and captain for the coming gameweek stay hidden until its deadline, so this uses their last gameweek's team.
+    cur: the latest gameweek whose deadline has passed (the app works it out from the deadlines; the saved FPL file can be out of date).
     """
     from concurrent.futures import ThreadPoolExecutor
     data = get(f'leagues-classic/{int(lid)}/standings/')
     rows = data['standings']['results'][:max_managers]
-    ev = [e for e in boot['events'] if e['finished'] or e['is_current']]
-    cur = max(e['id'] for e in ev) if ev else 1
+    if cur is None:
+        ev = [e for e in boot['events'] if e['finished'] or e['is_current']]
+        cur = max(e['id'] for e in ev) if ev else 1
     nxt = cur + 1
 
     def one(r):
         eid = r['entry']
         try:
-            hist = get(f'entry/{eid}/history/'); picks = get(f'entry/{eid}/event/{cur}/picks/')
+            hist = get(f'entry/{eid}/history/')
+            try: picks = get(f'entry/{eid}/event/{cur}/picks/')
+            except Exception: picks = get(f'entry/{eid}/event/{cur - 1}/picks/')   # FPL can take a moment to publish picks after a deadline
         except Exception:
             return None
         ids = [p['element'] for p in picks['picks']]

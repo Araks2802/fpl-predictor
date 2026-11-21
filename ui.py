@@ -208,17 +208,18 @@ def _player(P, i, val, fix, cap=None, vice=None, mark=''):
         tip = (f'Goal {100 * r[f"p_goal_{g}"]:.0f}% · Assist {100 * r[f"p_assist_{g}"]:.0f}% · ' if r.pos != 1 else '') + \
               (f'Clean sheet {100 * r[f"p_cs_{g}"]:.0f}% · ' if r.pos != 4 else '') + \
               (f'Def. contribution {100 * r[f"p_dc_{g}"]:.0f}% · ' if r.pos != 1 else '') + f'Bonus {100 * r[f"p_bonus_{g}"]:.0f}% · 60+ mins {100 * r[f"p_60_{g}"]:.0f}%'
-    return (f'<div class="pl {mark}" title="{esc(tip)}">{b}{f}<img src="{shirt(r.team_code, r.pos == 1)}"><div class="pname">{esc(r["name"])}</div>'
-            f'<div class="pxp">{val:.1f} pts</div><div class="pfix">{esc(fix)}</div></div>')
+    return (f'<div class="pl {mark}" title="{esc(tip)}">{b}{f}<img src="{shirt(r.team_code, r.pos == 1)}"><div class="pname">{esc(r["name"])}</div>' +
+            f'<div class="pxp">{val:.0f} pts</div>' if fix_gw.get('whole') else f'<div class="pxp">{val:.1f} pts</div>') + f'<div class="pfix">{esc(fix)}</div></div>'
 
 
 fix_gw = {}
 
 
-def pitch(P, xi, bench, cap, vice, value, fix, gw=None, compact=False, mark_in=(), mark_out=(), title=''):
+def pitch(P, xi, bench, cap, vice, value, fix, gw=None, compact=False, mark_in=(), mark_out=(), title='', whole=False):
     """value, fix: dicts id -> number / text shown under each shirt. Hovering a shirt shows his chances for gameweek gw.
-    compact: smaller shirts so two pitches fit side by side. mark_in / mark_out: players highlighted as coming in / going out."""
-    fix_gw['gw'] = gw
+    compact: smaller shirts so two pitches fit side by side. mark_in / mark_out: players highlighted as coming in / going out.
+    whole: show the points as whole numbers (live scores)."""
+    fix_gw['gw'] = gw; fix_gw['whole'] = whole
     mk = lambda i: 'in' if i in mark_in else ('out' if i in mark_out else '')
     rows = ''
     for p in (1, 2, 3, 4):
