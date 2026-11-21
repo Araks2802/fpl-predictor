@@ -779,7 +779,7 @@ if page == 'Live':
                 return 'no match'
             val = {i: rows[i]['pts'] * max(rows[i]['mult'], 1) for i in rows}
             P_live = P.assign(chance=100)
-            lc_, rc_ = st.columns([3, 2], gap='large')          # the pitch at its usual size, your 15 players next to it
+            lc_, rc_ = st.columns([3, 2], gap='medium')         # the pitch at its usual size, your 15 players next to it
             with lc_:
               sec('Your team', 'live points · captain multiplied')
               html(ui.pitch(P_live, [i for i in counting if i in P.index], [i for i in rest_ if i in P.index], t['cap_now'], next((r['id'] for r in t['rows'] if r['vice']), None),
@@ -787,8 +787,9 @@ if page == 'Live':
             notes = []
             for s_, b_ in t['subs']: notes.append(f'<b style="color:#fff">{ui.esc(P.name[b_])}</b> comes on for <b style="color:#fff">{ui.esc(P.name[s_])}</b> (did not play)')
             if t['cap_now'] != t['cap'] and t['cap'] in P.index: notes.append(f'<b style="color:#fff">{ui.esc(P.name[t["cap_now"]])}</b> takes the armband: {ui.esc(P.name[t["cap"]])} did not play')
-            html('<div class="note" style="margin-top:4px">' + (' · '.join(notes) + '. ' if notes else '') +
-                 'Green: came on as an automatic sub · the captain\'s points are multiplied. Bonus is provisional (from the live BPS) until FPL adds it, about an hour after each match.</div>')
+            with lc_:
+                html('<div class="note" style="margin-top:4px">' + (' · '.join(notes) + '. ' if notes else '') +
+                     'Green: came on as an automatic sub · the captain\'s points are multiplied. Bonus is provisional (from the live BPS) until FPL adds it, about an hour after each match.</div>')
             # your 15: how each got his points, against what the model predicted
             body = ''
             for r in sorted(t['rows'], key=lambda r: (r['mult'] == 0, -r['pts'] * max(r['mult'], 1))):
@@ -796,12 +797,18 @@ if page == 'Live':
                 if i not in P.index: continue
                 s_ = pl.get(i, {}); how = ' · '.join(f'{n_} {v:+d}' if v < 0 else f'{n_} {v}' for n_, v in s_.get('lines', [])) or '-'
                 role = 'Captain' if r['cap_now'] else ('Vice' if r['vice'] else ('Bench' if r['mult'] == 0 else 'Starter'))
-                body += (f'<tr style="{"opacity:.55" if r["mult"] == 0 else ""}"><td><div class="who"><img src="{ui.shirt(P.team_code[i], P.pos[i] == 1)}"><div><b>{ui.esc(P.name[i])}</b>'
-                         f'<div class="t">{P.team[i]} · {role}{" ×" + str(r["mult"]) if r["mult"] > 1 else ""}</div></div></div></td>'
-                         f'<td style="text-align:right"><b>{pred.get(i, 0) * max(r["mult"], 1):.1f}</b></td></tr>')
+            # your 15 as a compact list beside the pitch: starters, then the bench, each with the model's prediction
+            def l15_row(r):
+                i = r['id']; tag = 'C' if r['cap_now'] else ('V' if r['vice'] else '')
+                return (f'<div class="l15{" bench" if r["mult"] == 0 else ""}"><img src="{ui.shirt(P.team_code[i], P.pos[i] == 1)}">'
+                        f'<span class="nm">{ui.esc(P.name[i])}{f"<span class=tg>{tag}</span>" if tag else ""}</span><span class="tm">{P.team[i]} · {POS[P.pos[i]]}</span>'
+                        f'<span class="pv">{pred.get(i, 0) * max(r["mult"], 1):.1f}</span></div>')
+            ordered = sorted([r for r in t['rows'] if r['id'] in P.index], key=lambda r: (r['mult'] == 0, P.pos[r['id']], -pred.get(r['id'], 0)))
             with rc_:
-                sec('Your 15', 'predicted points')
-                html('<table class="fpl"><tr><th>Player</th><th style="text-align:right">Predicted</th></tr>' + body + '</table>')
+                sec('Your 15', 'the model\'s predicted points')
+                html('<div class="l15wrap">' + ''.join(l15_row(r) for r in ordered if r['mult'] > 0)
+                     + '<div class="l15h">BENCH</div>' + ''.join(l15_row(r) for r in ordered if r['mult'] == 0)
+                     + f'<div class="l15 tot"><span class="nm">Predicted total</span><span class="pv">{pred_total:.0f}</span></div></div>')
         elif eid_.isdigit():
             html(f'<div class="note">' + (f'FPL is updating after the GW{g} deadline (it usually takes about 30 minutes). Your live score shows as soon as FPL is back.'
                                           if FPL_UPDATING else f'Your GW{g} picks are not available from FPL yet.') + '</div>')

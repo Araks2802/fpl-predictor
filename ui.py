@@ -124,6 +124,17 @@ table.fpl.fixed .xpbar {min-width: 0;}
 [class*="st-key-cmplist_"] [data-testid="stCheckbox"] label {padding: 0; min-height: 0;}
 [class*="st-key-cmplist_"] table.fpl td {padding: 5px 8px;}
 @media (max-width: 640px) { [class*="st-key-cmplist_"] {height: 330px !important; max-height: 330px !important;} }   /* phones: a shorter list, so the comparison is close below */
+/* Live tab: your 15 beside the pitch, one compact line each */
+.l15wrap {display: flex; flex-direction: column; gap: 5px;}
+.l15 {display: grid; grid-template-columns: 28px 1fr auto auto; align-items: center; gap: 10px; background: rgba(255,255,255,.04); border-radius: 9px; padding: 9px 12px;}
+.l15 img {width: 26px; height: 26px; object-fit: contain;}
+.l15 .nm {font-family: 'Outfit'; font-weight: 700; font-size: .92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+.l15 .tm {color: #b9a7c2; font-size: .75rem; white-space: nowrap;}
+.l15 .pv {font-family: 'Outfit'; font-weight: 800; color: #00ff87; min-width: 38px; text-align: right;}
+.l15 .tg {display: inline-block; margin-left: 6px; width: 18px; height: 18px; line-height: 16px; text-align: center; border-radius: 50%; border: 1.5px solid #00ff87; color: #00ff87; font-size: .65rem;}
+.l15.bench {opacity: .6;}
+.l15.tot {grid-template-columns: 1fr auto; background: rgba(0,255,135,.08); margin-top: 4px;} .l15.tot .nm {font-size: .85rem; color: #b9a7c2;}
+.l15h {text-align: center; color: #b9a7c2; font-size: .72rem; letter-spacing: 1px; margin: 6px 0 2px 0;}
 /* the team ID box in the sidebar: green, like the selected buttons */
 .st-key-eid label {display: inline-flex; align-items: center; gap: 8px; width: auto; background: rgba(0,255,135,.1); border: 1px solid #00ff87; border-radius: 8px; padding: 3px 10px; margin-bottom: 6px;}
 .st-key-eid label p {color: #00ff87 !important; font-weight: 600;}
