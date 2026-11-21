@@ -180,6 +180,7 @@ if LIVE_GW:
         LIVE_WINDOW = any(s_ != 'finished' for s_ in _st); LIVE_ON = 'live' in _st
     except Exception:
         LIVE_WINDOW = FPL_UPDATING              # FPL down for its post-deadline update: the gameweek has started
+    if os.environ.get('FPL_FORCE_LIVE'): LIVE_WINDOW = True    # testing only: show the Live tab for a finished gameweek
 deadline = DL.get(G0) or datetime.fromisoformat(meta['deadline'].replace('Z', '+00:00'))
 left = deadline - NOW
 countdown = f'{left.days}d {left.seconds // 3600}h' if left.total_seconds() > 0 else 'deadline passed'
@@ -778,14 +779,17 @@ if page == 'Live':
                 return 'no match'
             val = {i: rows[i]['pts'] * max(rows[i]['mult'], 1) for i in rows}
             P_live = P.assign(chance=100)
-            html(ui.pitch(P_live, [i for i in counting if i in P.index], [i for i in rest_ if i in P.index], t['cap_now'], next((r['id'] for r in t['rows'] if r['vice']), None),
+            lc_, rc_ = st.columns([3, 2], gap='large')          # the pitch at its usual size, your 15 players next to it
+            with lc_:
+              sec('Your team', 'live points · captain multiplied')
+              html(ui.pitch(P_live, [i for i in counting if i in P.index], [i for i in rest_ if i in P.index], t['cap_now'], next((r['id'] for r in t['rows'] if r['vice']), None),
                           val, {i: stat_txt(i) for i in rows}, mark_in=[b_ for _, b_ in t['subs']], mark_out=[s_ for s_, _ in t['subs']], whole=True))
             notes = []
             for s_, b_ in t['subs']: notes.append(f'<b style="color:#fff">{ui.esc(P.name[b_])}</b> comes on for <b style="color:#fff">{ui.esc(P.name[s_])}</b> (did not play)')
             if t['cap_now'] != t['cap'] and t['cap'] in P.index: notes.append(f'<b style="color:#fff">{ui.esc(P.name[t["cap_now"]])}</b> takes the armband: {ui.esc(P.name[t["cap"]])} did not play')
             html('<div class="note" style="margin-top:4px">' + (' · '.join(notes) + '. ' if notes else '') +
                  'Green: came on as an automatic sub · the captain\'s points are multiplied. Bonus is provisional (from the live BPS) until FPL adds it, about an hour after each match.</div>')
-            # every player: how he got his points, against what the model predicted
+            # your 15: how each got his points, against what the model predicted
             body = ''
             for r in sorted(t['rows'], key=lambda r: (r['mult'] == 0, -r['pts'] * max(r['mult'], 1))):
                 i = r['id']
@@ -793,9 +797,11 @@ if page == 'Live':
                 s_ = pl.get(i, {}); how = ' · '.join(f'{n_} {v:+d}' if v < 0 else f'{n_} {v}' for n_, v in s_.get('lines', [])) or '-'
                 role = 'Captain' if r['cap_now'] else ('Vice' if r['vice'] else ('Bench' if r['mult'] == 0 else 'Starter'))
                 body += (f'<tr style="{"opacity:.55" if r["mult"] == 0 else ""}"><td><div class="who"><img src="{ui.shirt(P.team_code[i], P.pos[i] == 1)}"><div><b>{ui.esc(P.name[i])}</b>'
-                         f'<div class="t">{P.team[i]} · {role}{" ×" + str(r["mult"]) if r["mult"] > 1 else ""}</div></div></div></td><td>{stat_txt(i)}</td>'
-                         f'<td style="font-size:.8rem">{ui.esc(how)}</td><td>{pred.get(i, 0):.1f}</td><td><b style="color:{ui.GREEN}">{r["pts"] * max(r["mult"], 1):.0f}</b></td></tr>')
-            html('<table class="fpl"><tr><th>Player</th><th>Status</th><th>How he scored</th><th>Predicted</th><th>Points</th></tr>' + body + '</table>')
+                         f'<div class="t">{P.team[i]} · {role}{" ×" + str(r["mult"]) if r["mult"] > 1 else ""}</div></div></div></td>'
+                         f'<td style="text-align:right"><b>{pred.get(i, 0) * max(r["mult"], 1):.1f}</b></td></tr>')
+            with rc_:
+                sec('Your 15', 'predicted points')
+                html('<table class="fpl"><tr><th>Player</th><th style="text-align:right">Predicted</th></tr>' + body + '</table>')
         elif eid_.isdigit():
             html(f'<div class="note">' + (f'FPL is updating after the GW{g} deadline (it usually takes about 30 minutes). Your live score shows as soon as FPL is back.'
                                           if FPL_UPDATING else f'Your GW{g} picks are not available from FPL yet.') + '</div>')
