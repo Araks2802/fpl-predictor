@@ -113,6 +113,36 @@ DL = {e['id']: datetime.fromisoformat(e['deadline_time'].replace('Z', '+00:00'))
 ALL_GWS = [g for g in ALL_GWS if g not in DL or DL[g] > NOW] or ALL_GWS[-1:]
 G0 = ALL_GWS[0]
 LIVE_GW = max((g for g, d in DL.items() if d <= NOW), default=None)     # the latest gameweek whose deadline has passed (live, or just finished)
+FPL_UPDATING = bool(LIVE_GW) and (NOW - DL[LIVE_GW]).total_seconds() < 75 * 60   # FPL's own site is down for about 30 minutes after a deadline
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def live_news():
+    """Injury news, chance of playing, prices and ownership straight from FPL, refreshed every 15 minutes (no update job needed)."""
+    b_ = fe.get('bootstrap-static/')
+    return pd.DataFrame(b_['elements']).set_index('id'), datetime.now(timezone.utc)
+
+
+# ---- the latest team news and prices: reapply each player's chance of playing to the model's predictions, so a new injury flag
+# (or a player back to fit) shows straight away. The model's points before the chance-of-playing adjustment are in the file (xpr_ / _r_).
+NEWS_AT = None
+if any(c.startswith('xpr_') for c in P.columns) and not os.environ.get('FPL_NOW'):
+    try:
+        el_live, NEWS_AT = live_news()
+        el_live = el_live.reindex(P.index)
+        ok_ = el_live.status.notna()
+        for k_, g_ in enumerate(ALL_GWS):
+            av_ = fe.availability(el_live, k_).where(ok_, np.nan)
+            if f'xpr_{g_}' in P: P[f'xp_{g_}'] = (P[f'xpr_{g_}'] * av_).fillna(P[f'xp_{g_}'])
+            for c_ in ('p_goal', 'p_assist', 'p_cs', 'p_60', 'p_bonus', 'p_dc', 'xb'):
+                if f'{c_}_r_{g_}' in P: P[f'{c_}_{g_}'] = (P[f'{c_}_r_{g_}'] * av_).fillna(P[f'{c_}_{g_}'])
+        P['chance'] = el_live.chance_of_playing_next_round.where(ok_, P.chance)
+        P['news'] = el_live.news.where(ok_, P.news); P['status'] = el_live.status.where(ok_, P.status)
+        P['price'] = (el_live.now_cost / 10).where(ok_, P.price)
+        P['selected'] = el_live.selected_by_percent.astype(float).where(ok_, P.selected)
+        if 'form' in P: P['form'] = el_live.form.astype(float).where(ok_, P.form)
+    except Exception:
+        NEWS_AT = None                                        # FPL unreachable (or updating after a deadline): keep the last saved news
 with st.sidebar.expander('Model settings'):
     BOOST = st.slider('Form boost', 0, 50, 0, 5, format='%d%%', key='boost',
                       help='Mixes FPL form (points per match over the last 30 days) into every projection. Testing on unseen gameweeks found 0% predicts best: hot streaks mostly fade.') / 100
@@ -149,7 +179,7 @@ if LIVE_GW:
         _st = [_fl.fixture_state(f_) for f_ in live_data(LIVE_GW)[1]]
         LIVE_WINDOW = any(s_ != 'finished' for s_ in _st); LIVE_ON = 'live' in _st
     except Exception:
-        pass
+        LIVE_WINDOW = FPL_UPDATING              # FPL down for its post-deadline update: the gameweek has started
 deadline = DL.get(G0) or datetime.fromisoformat(meta['deadline'].replace('Z', '+00:00'))
 left = deadline - NOW
 countdown = f'{left.days}d {left.seconds // 3600}h' if left.total_seconds() > 0 else 'deadline passed'
@@ -457,8 +487,11 @@ with st.sidebar:
                         on_change=remember_save, args=('eid', 'team'))
     if eid.strip().isdigit():
         try: team = load_team(int(eid), boot)
-        except requests.HTTPError: st.error('No team found with that ID.')
-        except Exception as e: st.error(f'Could not load the team ({e}).')
+        except Exception as e:
+            if FPL_UPDATING:             # FPL takes its own site offline for about 30 minutes after each deadline
+                st.warning(f'FPL is updating after the GW{LIVE_GW} deadline (it usually takes about 30 minutes). Your team will load as soon as FPL is back.')
+            elif isinstance(e, requests.HTTPError): st.error('No team found with that ID.')
+            else: st.error(f'Could not load the team ({e}).')
     elif eid.strip(): st.error('That does not look like a team ID. Paste your FPL Points link or type the number.')
     if team is None:
         # FPL has no public search by team name, but a league's table can be searched: find yourself in any league you are in
@@ -514,7 +547,12 @@ ls_write()
 def _ago(t):
     m = (datetime.now(timezone.utc) - datetime.fromisoformat(t)).total_seconds() / 60
     return f'{m:.0f} min ago' if m < 90 else (f'{m / 60:.0f} h ago' if m < 48 * 60 else f'{m / 1440:.0f} days ago')
-updated_pill = (f'<span class="pill">Updated {_ago(meta["updated_at"])}' + (' · late team news' if meta.get('update_type', '').startswith('late') else '') + '</span>') if meta.get('updated_at') else ''
+if NEWS_AT:                       # team news and prices come live from FPL; the model itself is retrained after each gameweek
+    updated_pill = (f'<span class="pill" title="Injury news, chance of playing and prices are fetched from FPL every 15 minutes and applied to every prediction. '
+                    f'The model was last updated {_ago(meta["updated_at"]) if meta.get("updated_at") else "recently"}.">'
+                    f'Team news &amp; prices live · checked {NEWS_AT.astimezone(UK):%H:%M}</span>')
+else:
+    updated_pill = (f'<span class="pill">Updated {_ago(meta["updated_at"])}' + (' · late team news' if meta.get('update_type', '').startswith('late') else '') + '</span>') if meta.get('updated_at') else ''
 if LIVE_WINDOW: updated_pill += f'<span class="pill" style="border-color:#00ff87;color:#00ff87">● GW{LIVE_GW} {"live now" if LIVE_ON else "in progress"} · predictions update after its results</span>'
 sub = (f"{team['manager']} · {team['points']} pts · rank {team['rank']:,}" if team and team.get('rank') else 'Projected points, best XI, captain and transfers for the coming gameweek')
 html(f'<div class="hero"><div class="hero-title">{ui.esc(team["name"]) if team else "Your FPL team,"} <span>{"GW" + str(G0) if team else "projected."}</span></div>'
@@ -670,8 +708,11 @@ if page == 'Live':
     sn = {t['id']: t['short_name'] for t in boot['teams']}
 
     @st.cache_data(ttl=300, show_spinner=False)
+    def _live_picks(eid_, g_):
+        return fe.get(f'entry/{int(eid_)}/event/{g_}/picks/')      # a failure is not cached, so the picks load as soon as FPL has them
+
     def live_picks(eid_, g_):
-        try: return fe.get(f'entry/{int(eid_)}/event/{g_}/picks/')
+        try: return _live_picks(eid_, g_)
         except Exception: return None
 
     @st.cache_data(ttl=300, show_spinner=False)
@@ -690,9 +731,15 @@ if page == 'Live':
             return bt.groupby('element').blend.sum().to_dict()
         except Exception: return {}
 
-    @st.fragment(run_every=60 if LIVE_ON else None)
+    @st.fragment(run_every=60 if (LIVE_ON or FPL_UPDATING) else None)
     def live_view():
-        live, fx = live_data(g)
+        try: live, fx = live_data(g)
+        except Exception:
+            html(f'<div class="card" style="padding:18px"><div class="v" style="font-size:1.1rem">' +
+                 (f'FPL is updating after the GW{g} deadline' if FPL_UPDATING else 'FPL\'s live data is not reachable right now') +
+                 '</div><div class="l" style="font-size:.9rem;margin-top:6px">' + ('It usually takes about 30 minutes. ' if FPL_UPDATING else '') +
+                 'This page tries again every minute.</div></div>')
+            return
         pl = fl.players(live, fx, team_of)
         states = [fl.fixture_state(f) for f in fx]
         n_live, n_done, n_todo = states.count('live'), states.count('finished'), states.count('not started')
@@ -748,7 +795,8 @@ if page == 'Live':
                          f'<td style="font-size:.8rem">{ui.esc(how)}</td><td>{pred.get(i, 0):.1f}</td><td><b style="color:{ui.GREEN}">{r["pts"] * max(r["mult"], 1):.0f}</b></td></tr>')
             html('<table class="fpl"><tr><th>Player</th><th>Status</th><th>How he scored</th><th>Predicted</th><th>Points</th></tr>' + body + '</table>')
         elif eid_.isdigit():
-            html(f'<div class="note">Your GW{g} picks are not available from FPL yet.</div>')
+            html(f'<div class="note">' + (f'FPL is updating after the GW{g} deadline (it usually takes about 30 minutes). Your live score shows as soon as FPL is back.'
+                                          if FPL_UPDATING else f'Your GW{g} picks are not available from FPL yet.') + '</div>')
         else:
             html('<div class="note">Add your team ID in the sidebar to see your live score.</div>')
 

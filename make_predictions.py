@@ -46,8 +46,11 @@ for k, g in enumerate(gws[:6]):
     f = fut[fut.gw == g]; av = fe.availability(el, k)
     for c in ('p_goal', 'p_assist', 'p_cs', 'p_60', 'p_bonus', 'p_dc'):
         p_any = f.groupby('element')[c].apply(lambda x: 1 - np.prod(1 - x.values))
+        P[f'{c}_r_{g}'] = p_any.reindex(P.index).fillna(0).values                       # before the chance-of-playing adjustment (the app reapplies live flags)
         P[f'{c}_{g}'] = (p_any.reindex(P.index).fillna(0) * av.reindex(P.index)).values
-    P[f'xb_{g}'] = (f.groupby('element').xb.sum().reindex(P.index).fillna(0) * av.reindex(P.index)).values   # expected bonus points (doubles add up)
+    xb_raw = f.groupby('element').xb.sum().reindex(P.index).fillna(0)
+    P[f'xb_r_{g}'] = xb_raw.values
+    P[f'xb_{g}'] = (xb_raw * av.reindex(P.index)).values   # expected bonus points (doubles add up)
 # ---- team form and matchup facts for the next fixture (shown in the app)
 nx = fut[fut.gw == gws[0]].drop_duplicates('element').set_index('element')
 for c in ('dc_hit_r10', 'dc_p90_r10', 'bonus_rate_r10', 'own_form5', 'own_gd5', 'own_xgf', 'own_xga', 'opp_form5', 'opp_xgf', 'opp_xga', 'h2h_adj', 'h2h_n', 'venue_adj', 'p_team_cs'):
@@ -57,7 +60,7 @@ P.to_parquet(ROOT / 'data' / 'predictions.parquet')
 # the Review tab later compares exactly these predictions with what happened.
 g0 = gws[0]; snap_dir = ROOT / 'data' / 'snapshots'; snap_dir.mkdir(exist_ok=True)
 cols = ['name', 'team', 'team_id', 'team_code', 'pos', 'price', 'selected', 'chance', f'opp_{g0}', f'xp_{g0}'] + \
-       [c for c in P.columns if c.endswith(f'_{g0}') and c.startswith(('p_', 'xb_'))]
+       [c for c in P.columns if c.endswith(f'_{g0}') and c.startswith(('p_', 'xb_')) and f'_r_{g0}' not in c]
 snap = P[cols].copy(); snap.columns = [c[:-len(f'_{g0}')] if c.endswith(f'_{g0}') else c for c in snap.columns]
 snap['gw'] = g0; snap['made_at'] = pd.Timestamp.now(tz='UTC').isoformat(timespec='minutes')
 snap.to_parquet(snap_dir / f'gw{g0}.parquet')

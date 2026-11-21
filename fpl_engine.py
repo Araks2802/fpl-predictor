@@ -44,7 +44,9 @@ def predictions(h, nets, sc, gb, boot, horizon=3):
     teams = {t['id']: t['short_name'] for t in boot['teams']}
     for k, g in enumerate(gws):
         f = fut[fut.gw == g]
-        out[f'xp_{int(g)}'] = f.groupby('element').xp.sum().reindex(out.index).fillna(0) * availability(el, k)
+        raw = f.groupby('element').xp.sum().reindex(out.index).fillna(0)
+        out[f'xpr_{int(g)}'] = raw                             # before the chance-of-playing adjustment: the app reapplies the latest flags itself
+        out[f'xp_{int(g)}'] = raw * availability(el, k)
         opp = f.assign(o=f.opponent_team.map(teams) + np.where(f.was_home, ' (H)', ' (A)')).groupby('element').o.agg(', '.join)
         out[f'opp_{int(g)}'] = opp.reindex(out.index).fillna('-')
     out['name'] = el.web_name; out['pos'] = el.element_type; out['team'] = el.team.map(teams); out['team_id'] = el.team
