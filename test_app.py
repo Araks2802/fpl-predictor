@@ -36,6 +36,11 @@ for page, setup, extra in CASES:
     at.run()
     ex = list(at.exception)
     if not at.markdown: ex = ex or ['page rendered nothing']   # an empty page means the script never ran
+    # pages with a pitch must draw every shirt with its name (a broken pitch shows only the points)
+    if not ex and setup == 'id' and page in ('My team', 'Transfers', 'Review'):
+        md_ = ' '.join(m.value for m in at.markdown)
+        if 'class="pitch"' in md_ and md_.count('class="pname"') < 11 or md_.count('<div class="pl ') != md_.count('class="pname"'):
+            ex = [type('E', (), {'value': f'pitch drawn without names: {md_.count(chr(60) + "div class=" + chr(34) + "pl ")} players, {md_.count("class=" + chr(34) + "pname" + chr(34))} names'})()]
     fails += bool(ex)
     shown = sum('class="mv in"' in m.value for m in at.markdown) + sum('Hold. Keep your team' in m.value for m in at.markdown)
     if page == 'Planner' and 'pl_moves' in extra: print('   errors:', [e.value for e in at.error], '| moves kept:', len(at.session_state['pl_moves']))

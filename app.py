@@ -558,7 +558,9 @@ sub = (f"{team['manager']} · {team['points']} pts · rank {team['rank']:,}" if 
 html(f'<div class="hero"><div class="hero-title">{ui.esc(team["name"]) if team else "Your FPL team,"} <span>{"GW" + str(G0) if team else "projected."}</span></div>'
      f'<div class="hero-sub">{ui.esc(sub)}</div>'
      f'<span class="pill g">GW{G0} · {deadline.astimezone(UK):%a %d %b %H:%M} UK time</span><span class="pill">Deadline in {countdown}</span>{updated_pill}</div>')
-PAGES = (['Live'] if LIVE_GW else []) + ['My team', 'Transfers', 'Planner', 'Captain', 'Chips', 'League', 'Compare', 'Players', 'Teams', 'Review', 'How it works']
+if st.session_state.get('nav') == 'Live' and not LIVE_WINDOW: st.session_state['nav'] = 'My team'   # the gameweek ended while the Live tab was open
+# the Live tab only exists while a gameweek is being played
+PAGES = (['Live'] if LIVE_WINDOW else []) + ['My team', 'Transfers', 'Planner', 'Captain', 'Chips', 'League', 'Compare', 'Players', 'Teams', 'Review', 'How it works']
 page = st.segmented_control('Page', PAGES, default='Live' if LIVE_WINDOW else 'My team', label_visibility='collapsed', key='nav') or ('Live' if LIVE_WINDOW else 'My team')
 
 

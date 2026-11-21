@@ -208,8 +208,9 @@ def _player(P, i, val, fix, cap=None, vice=None, mark=''):
         tip = (f'Goal {100 * r[f"p_goal_{g}"]:.0f}% · Assist {100 * r[f"p_assist_{g}"]:.0f}% · ' if r.pos != 1 else '') + \
               (f'Clean sheet {100 * r[f"p_cs_{g}"]:.0f}% · ' if r.pos != 4 else '') + \
               (f'Def. contribution {100 * r[f"p_dc_{g}"]:.0f}% · ' if r.pos != 1 else '') + f'Bonus {100 * r[f"p_bonus_{g}"]:.0f}% · 60+ mins {100 * r[f"p_60_{g}"]:.0f}%'
-    return (f'<div class="pl {mark}" title="{esc(tip)}">{b}{f}<img src="{shirt(r.team_code, r.pos == 1)}"><div class="pname">{esc(r["name"])}</div>' +
-            f'<div class="pxp">{val:.0f} pts</div>' if fix_gw.get('whole') else f'<div class="pxp">{val:.1f} pts</div>') + f'<div class="pfix">{esc(fix)}</div></div>'
+    pts = f'{val:.0f}' if fix_gw.get('whole') else f'{val:.1f}'          # live scores are whole numbers
+    return (f'<div class="pl {mark}" title="{esc(tip)}">{b}{f}<img src="{shirt(r.team_code, r.pos == 1)}"><div class="pname">{esc(r["name"])}</div>'
+            f'<div class="pxp">{pts} pts</div><div class="pfix">{esc(fix)}</div></div>')
 
 
 fix_gw = {}
