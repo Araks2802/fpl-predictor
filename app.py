@@ -1567,31 +1567,41 @@ elif page == 'Players':
 
 # ================================================================== TEAMS: league table, recent results and team stats, then the fixture ticker
 elif page == 'Teams':
-    @st.cache_data(ttl=3600, show_spinner=False)
-    def team_season():
-        """This season's results per team from the fixture list: the table, the last 5 results and clean sheets."""
-        fx = json.load(open(ROOT / 'data' / '2026-27' / 'fixtures.json'))
+    @st.cache_data(ttl=120, show_spinner=False)
+    def team_fixtures():
+        """The fixture list straight from FPL (every 2 minutes), so results and matches in play count straight away; the saved file if FPL is down."""
+        try: return fe.get('fixtures/'), True
+        except Exception: return json.load(open(ROOT / 'data' / '2026-27' / 'fixtures.json')), False
+
+    @st.cache_data(ttl=120, show_spinner=False)
+    def team_season(fx):
+        """This season's results per team: the table, the last 5 results and clean sheets. Matches in play count at their current score."""
         sn = {t['id']: t['short_name'] for t in boot['teams']}
         rows = []
         for f in fx:
-            if not f['finished'] or f['team_h_score'] is None: continue
+            if not f.get('started') or f['team_h_score'] is None: continue
+            live_ = not (f.get('finished') or f.get('finished_provisional'))
             for side, tid, oid, gf, ga in (('H', f['team_h'], f['team_a'], f['team_h_score'], f['team_a_score']), ('A', f['team_a'], f['team_h'], f['team_a_score'], f['team_h_score'])):
-                rows.append(dict(team=sn[tid], opp=sn[oid], ha=side, gf=gf, ga=ga, ko=f['kickoff_time'], gw=f['event'],
+                rows.append(dict(team=sn[tid], opp=sn[oid], ha=side, gf=gf, ga=ga, ko=f['kickoff_time'], gw=f['event'], live=live_, mins=f.get('minutes', 0),
                                  res='W' if gf > ga else ('D' if gf == ga else 'L')))
         R = pd.DataFrame(rows).sort_values('ko')
         g = R.groupby('team')
         S = pd.DataFrame({'p': g.size(), 'w': g.res.apply(lambda x: (x == 'W').sum()), 'd': g.res.apply(lambda x: (x == 'D').sum()),
-                          'l': g.res.apply(lambda x: (x == 'L').sum()), 'gf': g.gf.sum(), 'ga': g.ga.sum(), 'cs': g.ga.apply(lambda x: (x == 0).sum())})
+                          'l': g.res.apply(lambda x: (x == 'L').sum()), 'gf': g.gf.sum(), 'ga': g.ga.sum(),
+                          'cs': R.assign(c_=(R.ga == 0) & ~R.live).groupby('team').c_.sum()})     # a clean sheet only counts once the match has ended
         S['gd'] = S.gf - S.ga; S['pts'] = 3 * S.w + S.d
         S = S.sort_values(['pts', 'gd', 'gf'], ascending=False); S['rank'] = range(1, len(S) + 1)
-        S['last5'] = g.apply(lambda d: d.tail(5)[['res', 'opp', 'ha', 'gf', 'ga', 'gw']].to_dict('records')).reindex(S.index)
+        S['last5'] = g.apply(lambda d: d.tail(5)[['res', 'opp', 'ha', 'gf', 'ga', 'gw', 'live', 'mins']].to_dict('records')).reindex(S.index)
+        S['playing'] = g.live.any().reindex(S.index)
         S['form5'] = g.apply(lambda d: (d.tail(5).res.map({'W': 3, 'D': 1, 'L': 0})).sum()).reindex(S.index)
         return S
 
-    S = team_season()
+    fx_all, fx_live = team_fixtures(); S = team_season(fx_all)
+    n_play = int(sum(1 for f in fx_all if f.get('started') and not (f.get('finished') or f.get('finished_provisional'))))
     TF = P.groupby('team').agg(code=('team_code', 'first'), xgf=('own_xgf', 'first'), xga=('own_xga', 'first'), cs_next=('p_team_cs', 'first'), opp=(f'opp_{G0}', 'first'))
     S = S.join(TF, how='left')
-    sec('Teams', f'this season so far, before GW{G0}')
+    sec('Teams', 'this season so far' + (f' · <span style="color:#00ff87">● live: {n_play} match{"es" if n_play != 1 else ""} in play, counted at the current score</span>' if n_play else '')
+        + ('' if fx_live else ' · from the last update (FPL not reachable)'))
     sort = st.segmented_control('Sort teams by', ['League table', 'Form (last 5)', 'Attack (xG for)', 'Defence (xG against)', f'GW{G0} clean sheet chance'],
                                 default='League table', key='tf_sort') or 'League table'
     key = {'League table': ('rank', True), 'Form (last 5)': ('form5', False), 'Attack (xG for)': ('xgf', False), 'Defence (xG against)': ('xga', True),
@@ -1599,13 +1609,15 @@ elif page == 'Teams':
     S = S.sort_values([key[0], 'rank'], ascending=[key[1], True])
     RC = {'W': ('#00ff87', '#1b0021'), 'D': ('#b9a7c2', '#1b0021'), 'L': ('#e90052', '#ffffff')}
     chip = lambda r: (f'<span title="GW{r["gw"]}: {r["opp"]} ({r["ha"]}) {r["gf"]}-{r["ga"]}" style="display:inline-block;width:22px;height:22px;line-height:22px;margin:1px;'
-                      f'border-radius:5px;text-align:center;font-weight:800;font-size:.72rem;background:{RC[r["res"]][0]};color:{RC[r["res"]][1]}">{r["res"]}</span>')
+                      f'border-radius:5px;text-align:center;font-weight:800;font-size:.72rem;background:{RC[r["res"]][0]};color:{RC[r["res"]][1]};'
+                      f'{"outline:2px solid #ebff00;outline-offset:1px" if r.get("live") else ""}">{r["res"]}</span>')
     res_line = lambda r: (f'GW{r["gw"]} · <b style="color:{RC[r["res"]][0]}">{r["res"]}</b> <b>{r["gf"]}-{r["ga"]}</b> '
-                          f'{"vs" if r["ha"] == "H" else "at"} {r["opp"]}')
+                          f'{"vs" if r["ha"] == "H" else "at"} {r["opp"]}' + (f' <b style="color:#ebff00">● live {r["mins"]}\'</b>' if r.get('live') else ''))
     bar = lambda v, mx, good=True: (f'<div class="xpbar" style="min-width:80px"><i style="width:{max(4, min(100, 100 * v / mx)):.0f}%;'
                                     f'{"" if good else "background:linear-gradient(90deg,#ff1751,#e90052)"}"></i><span>{v:.2f}</span></div>')
     body = ''.join(
-        f'<tr><td>{r["rank"]}</td><td style="white-space:nowrap"><img src="{ui.shirt(r.code)}" style="width:26px;vertical-align:middle;margin-right:8px"><b>{tm}</b></td>'
+        f'<tr><td>{r["rank"]}</td><td style="white-space:nowrap"><img src="{ui.shirt(r.code)}" style="width:26px;vertical-align:middle;margin-right:8px"><b>{tm}</b>'
+        f'{" <span style=color:#ebff00>●</span>" if r.playing else ""}</td>'
         f'<td>{r.w}-{r.d}-{r.l}</td><td style="white-space:nowrap">{r.gf}-{r.ga} ({r.gd:+d})</td><td><b>{r.pts}</b></td>'
         f'<td style="white-space:nowrap"><details class="res5"><summary>{"".join(chip(x) for x in r.last5)}<span class="res5-hint">▾</span></summary>'
         f'<div class="res5-list">{"<br>".join(res_line(x) for x in reversed(r.last5))}</div></details></td>'
@@ -1613,7 +1625,8 @@ elif page == 'Teams':
         f'<td><b style="color:{ui.GREEN}">{100 * r.cs_next:.0f}%</b></td></tr>' for tm, r in S.iterrows())
     html(f'<div style="overflow-x:auto"><table class="fpl" style="min-width:940px"><tr><th>#</th><th>Team</th><th>W-D-L</th><th>Goals (GD)</th><th>Pts</th><th>Last 5</th>'
          f'<th>xG for</th><th>xG against</th><th>Clean sheets</th><th>GW{G0}</th><th>CS chance</th></tr>{body}</table></div>')
-    html(f'<div class="note" style="margin-top:6px">{S.p.max()} games played. Last 5 runs oldest to newest: click the results to see the scores (newest first). xG for and against are per game over the last 10 games, '
+    html(f'<div class="note" style="margin-top:6px">Up to {S.p.max()} games played. Results come live from FPL: a match in play counts at its current score '
+         f'(yellow ring, ● next to the team) until it ends. Last 5 runs oldest to newest: click the results to see the scores (newest first). xG for and against are per game over the last 10 games, '
          f'pulled a little towards the league average. CS chance is the chance of a clean sheet in GW{G0}. '
          'All of these feed the model, so a team in good form or with a tight defence already lifts its players\' projections.</div>')
 
