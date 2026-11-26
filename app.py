@@ -93,7 +93,7 @@ def load_team(eid, _boot):
 
 
 @st.cache_data(show_spinner=False)
-def lineup(ids, gw, boost=0.0):     # boost is part of the cache key: projections change with it
+def lineup(ids, gw, boost=0.0):     # boost = PKEY, part of the cache key: projections change with live news, retrains and the form boost
     return fe.best_xi(list(ids), P, gw)
 
 
@@ -152,6 +152,9 @@ if BOOST:
     for k, g in enumerate(ALL_GWS):
         nfix = P[f'opp_{g}'].map(lambda o: 0 if o == '-' else o.count(',') + 1)
         P[f'xp_{g}'] = P[f'xp_{g}'] + BOOST * (P.form * nfix * (1 - (1 - c) * 0.5 ** k) - P[f'xp_{g}'])
+# cache key for every plan, lineup and chip table below: a fingerprint of the projections they read (after the live team news and
+# the form boost), so a retrain or a new injury flag gives a fresh answer instead of an old cached one
+PKEY = (BOOST, int(pd.util.hash_pandas_object(P[[c for c in P.columns if c.startswith('xp_')] + ['price', 'status']], index=True).sum()))
 @st.cache_data(ttl=60, show_spinner=False)
 def live_data(g_):
     """FPL's live data and fixtures for a gameweek. Shared by every visitor and fetched at most once a minute."""
@@ -339,7 +342,7 @@ def made_dialog(team_, made_now, gw):
              '</b> tap the name of the player you sold.' + (' Or, if that is all of them, review and confirm.' if bk else '') + '</div>')
         if bk and st.button(f'Review and confirm {len(bk)} transfer{"s" if len(bk) > 1 else ""}', type='primary', use_container_width=True, key='md_review_btn'):
             S['md_review'] = True; st.rerun(scope='fragment')
-        xi_, cap_, vice_, bench_ = lineup(tuple(sorted(now_ids)), gw, BOOST)
+        xi_, cap_, vice_, bench_ = lineup(tuple(sorted(now_ids)), gw, PKEY)
         hit_ = click_pitch(xi_, bench_, cap_, vice_, gw, tag=f'md{len(bk)}', order=now_ids, tip='I sold {name}', ins=[b_ for _, b_ in bk])
         if hit_ is not None:
             S['md_out'] = int(hit_); st.rerun(scope='fragment')
@@ -630,7 +633,7 @@ def delta_bar(pb, pa, g, hit=0):
 def compare_pitches(before, after, g, outs=(), ins=(), t_before='Now', t_after='After the changes', hit=0):
     """Two pitches side by side, now and after the changes, with the points difference between them."""
     xp = P[f'xp_{g}']
-    lb, la = lineup(tuple(sorted(before)), g, BOOST), lineup(tuple(sorted(after)), g, BOOST)
+    lb, la = lineup(tuple(sorted(before)), g, PKEY), lineup(tuple(sorted(after)), g, PKEY)
     pb = xp[lb[0]].sum() + xp[lb[1]]; pa = xp[la[0]].sum() + xp[la[1]]; d = pa - pb - hit
     html(delta_bar(pb, pa, g, hit))
     c1, c3 = st.columns(2)
@@ -902,7 +905,7 @@ elif page == 'My team':
     ids = tuple(int(i) for i in team['squad'].id)
     gw_lab = st.segmented_control('Gameweek', [f'GW{g}' for g in ALL_GWS[:6]], default=f'GW{G0}', label_visibility='collapsed') or f'GW{G0}'
     gw = int(gw_lab[2:]); xp = P[f'xp_{gw}']
-    xi, cap, vice, bench = lineup(ids, gw, BOOST)
+    xi, cap, vice, bench = lineup(ids, gw, PKEY)
     total = xp[xi].sum() + xp[cap] - (HIT0 if gw == G0 else 0); bpts = xp[bench].sum()
     value = (team['squad'].now.sum() + team['bank']) / 10
     html(ui.cards([(f'{total:.0f}', f'projected GW{gw} points' + (f' (after −{HIT0} hit)' if HIT0 and gw == G0 else ''), 'g'), (ui.esc(P.name[cap]), f'captain · {2 * xp[cap]:.1f} pts', 'c'),
@@ -919,7 +922,7 @@ elif page == 'My team':
         sec('Next 6 gameweeks', 'projected team points, no transfers')
         gs = ALL_GWS[:6]; tots = []
         for g in gs:
-            x2, c2_, _, _ = lineup(ids, g, BOOST); tots.append(P.loc[x2, f'xp_{g}'].sum() + P.loc[c2_, f'xp_{g}'] - (HIT0 if g == G0 else 0))
+            x2, c2_, _, _ = lineup(ids, g, PKEY); tots.append(P.loc[x2, f'xp_{g}'].sum() + P.loc[c2_, f'xp_{g}'] - (HIT0 if g == G0 else 0))
         fig = go.Figure(go.Bar(x=[f'GW{g}' for g in gs], y=tots, marker=dict(color=[ui.GREEN if g == gw else '#7a3f86' for g in gs]),
                                text=[f'{t:.0f}' for t in tots], textposition='outside', hovertemplate='%{x}: %{y:.1f} pts<extra></extra>'))
         html_fig = ui.plot_style(fig, 250); html_fig.update_yaxes(range=[0, max(tots) * 1.2], showticklabels=False)
@@ -957,13 +960,13 @@ elif page == 'Transfers':
     with st.spinner('Planning your transfers...'):
         try:
             if chip == 'Free Hit':
-                fh = run_opt(sj, team['bank'], team['free_transfers'], 15, 'Free Hit', roll, tuple(banned), tuple(keep), tuple(gws), BOOST)
+                fh = run_opt(sj, team['bank'], team['free_transfers'], 15, 'Free Hit', roll, tuple(banned), tuple(keep), tuple(gws), PKEY)
                 R = dict(weeks=[dict(gw=gws[0], out=fh['out'], inn=fh['inn'], hits=0, ft_before=team['free_transfers'], squad=fh['squad'], bank=fh['bank_after'])], bank_after=fh['bank_after'])
             else:
-                R = run_plan(sj, team['bank'], team['free_transfers'], allow_hits, None if chip == 'None' else chip, roll, tuple(banned), tuple(keep), tuple(gws), BOOST)
+                R = run_plan(sj, team['bank'], team['free_transfers'], allow_hits, None if chip == 'None' else chip, roll, tuple(banned), tuple(keep), tuple(gws), PKEY)
         except ValueError as e:
             st.error(str(e)); done()
-    pts = lambda sq_, g: (lambda lu: P.loc[lu[0], f'xp_{g}'].sum() + P.loc[lu[1], f'xp_{g}'])(lineup(tuple(sorted(sq_)), g, BOOST))
+    pts = lambda sq_, g: (lambda lu: P.loc[lu[0], f'xp_{g}'].sum() + P.loc[lu[1], f'xp_{g}'])(lineup(tuple(sorted(sq_)), g, PKEY))
     W = R['weeks']; per_gain = [pts(w['squad'], w['gw']) - pts(ids, w['gw']) for w in W]
     hits_tot = sum(w['hits'] for w in W); net = sum(per_gain) - fe.HIT * hits_tot
     n_moves = sum(len(w['inn']) for w in W)
@@ -1169,7 +1172,7 @@ elif page == 'Planner':
 
     def eff_lineup(g_, squad_):
         """Your chosen XI, bench and captain for week g_, or the best XI if you have not chosen one (or it is no longer legal)."""
-        best = lineup(tuple(sorted(squad_)), g_, BOOST)
+        best = lineup(tuple(sorted(squad_)), g_, PKEY)
         ov = LU.get(g_)
         if not ov: return best, False
         bench = [follow(b, g_) for b in ov['bench']]
@@ -1196,7 +1199,7 @@ elif page == 'Planner':
     g = int(gsel[2:])
     c2.write(''); c2.write('')
     if c2.button('Start from the suggestion', use_container_width=True, help='Load the Transfers tab plan, then change it as you like'):
-        R = run_plan(team['squad'][['id', 'sell', 'now']].to_json(), team['bank'], team['free_transfers'], False, None, 1.0, (), (), tuple(PG), BOOST)
+        R = run_plan(team['squad'][['id', 'sell', 'now']].to_json(), team['bank'], team['free_transfers'], False, None, 1.0, (), (), tuple(PG), PKEY)
         st.session_state['pl_moves'] = [dict(gw=w['gw'], out=o, inn=i) for w in R['weeks'] for o, i in pairs(dict(out=w['out'], inn=w['inn']))]
         st.rerun()
     c3.write(''); c3.write('')
@@ -1246,7 +1249,7 @@ elif page == 'Planner':
              'Changes in GW11 carry into GW12 and GW13, just like real transfers.</div>')
 
     # ---- totals
-    pts = lambda sq_, gw_: (lambda lu: P.loc[lu[0], f'xp_{gw_}'].sum() + P.loc[lu[1], f'xp_{gw_}'])(lineup(tuple(sorted(sq_)), gw_, BOOST))
+    pts = lambda sq_, gw_: (lambda lu: P.loc[lu[0], f'xp_{gw_}'].sum() + P.loc[lu[1], f'xp_{gw_}'])(lineup(tuple(sorted(sq_)), gw_, PKEY))
     pts_eff = lambda gw_: (lambda lu: P.loc[lu[0], f'xp_{gw_}'].sum() + P.loc[lu[1], f'xp_{gw_}'])(eff_lineup(gw_, W[gw_]['squad'])[0])
     gains = {x: pts_eff(x) - pts(ids, x) - fe.HIT * W[x]['hits'] for x in PG}   # vs your GW10 squad, confirmed transfers and their hits included
     net = sum(gains.values()); hits_tot = sum(W[x]['hits'] for x in PG)
@@ -1261,10 +1264,10 @@ elif page == 'Planner':
     html('<div class="hint">👆 Click a player\'s name on the right-hand pitch to transfer him, move him to or from the bench, or make him captain</div>')
     xp = P[f'xp_{g}']
     orig = team.get('orig_ids', ids); conf = team.get('made', [])
-    lb = lineup(tuple(sorted(orig)), g, BOOST); la, chosen = eff_lineup(g, after_g)
+    lb = lineup(tuple(sorted(orig)), g, PKEY); la, chosen = eff_lineup(g, after_g)
     pb = xp[lb[0]].sum() + xp[lb[1]]; pa = xp[la[0]].sum() + xp[la[1]]
     outs = [i for i in orig if i not in after_g]; ins = [i for i in after_g if i not in orig]
-    best_after = lineup(tuple(sorted(after_g)), g, BOOST)
+    best_after = lineup(tuple(sorted(after_g)), g, PKEY)
     moved = [i for i in la[0] if i not in best_after[0]] + [i for i in la[3] if i not in best_after[3]] if chosen else []
     html(delta_bar(pb, pa, g, fe.HIT * W[g]['hits']))
     p1, p3 = st.columns(2)
@@ -1323,7 +1326,7 @@ elif page == 'League':
     own, capshare, n_riv = fe.league_ownership(L, exclude=me_id)
     gws_left = len(ALL_GWS)
     G3 = ALL_GWS[:3]
-    proj = lambda sq_, g: (lambda lu: P.loc[lu[0], f'xp_{g}'].sum() + P.loc[lu[1], f'xp_{g}'])(lineup(tuple(sorted(int(i) for i in sq_ if i in P.index)), g, BOOST))
+    proj = lambda sq_, g: (lambda lu: P.loc[lu[0], f'xp_{g}'].sum() + P.loc[lu[1], f'xp_{g}'])(lineup(tuple(sorted(int(i) for i in sq_ if i in P.index)), g, PKEY))
     M['next_gw'] = [proj(sq_, G0) for sq_ in M.squad]
     M['next3'] = [sum(proj(sq_, g) for g in G3) for sq_ in M.squad]
     if me_id is not None and team is not None and (M.entry == me_id).any():     # your row uses your current team (confirmed transfers, minus any hit)
@@ -1390,7 +1393,7 @@ elif page == 'League':
                        (f'<span style="color:{ui.GREEN if tot_me >= tot_th else ui.PINK}">{tot_me - tot_th:+.1f}</span>', 'expected swing in your favour', ''),
                        (f'{gap_now:+d}' if gap_now is not None else '-', 'current gap (you minus them)', '')]))
         g_ = G0; xpg = P[f'xp_{g_}']
-        lm, lt = lineup(tuple(sorted(mine_)), g_, BOOST), lineup(tuple(sorted(their)), g_, BOOST)
+        lm, lt = lineup(tuple(sorted(mine_)), g_, PKEY), lineup(tuple(sorted(their)), g_, PKEY)
         h1, h2 = st.columns(2)
         with h1:
             html(f'<div class="ptitle">You <small>{xpg[lm[0]].sum() + xpg[lm[1]] - HIT0:.1f} pts in GW{g_}' + (f' (after −{HIT0} hit)' if HIT0 else '') + '</small></div>')
@@ -1447,7 +1450,7 @@ elif page == 'League':
             from io import StringIO
             o = pd.Series(dict(own_items), dtype=float) * lam_
             return fe.optimise_plan(fe.league_P(P, o, list(gws_)), list(gws_), pd.read_json(StringIO(squad_json)), bank, ft)
-        R = league_plan(team['squad'][['id', 'sell', 'now']].to_json(), team['bank'], team['free_transfers'], tuple(own.items()), lam, tuple(G3), BOOST)
+        R = league_plan(team['squad'][['id', 'sell', 'now']].to_json(), team['bank'], team['free_transfers'], tuple(own.items()), lam, tuple(G3), PKEY)
         rows_ = ''
         for w in R['weeks']:
             raw = proj(w['squad'], w['gw']) - proj(my_sq, w['gw'])
@@ -1490,7 +1493,7 @@ elif page == 'Chips':
         if not left or not gws:
             html('<div class="note">No chips left in this half.</div>'); continue
         with st.spinner('Working out the best week for each chip...'):
-            V = chip_table(sj, team['bank'], team['free_transfers'], tuple(gws), 6 if h == half_now else 0, BOOST)
+            V = chip_table(sj, team['bank'], team['free_transfers'], tuple(gws), 6 if h == half_now else 0, PKEY)
         fh_ban = set()
         if h == 2 and (19 in used_in('Free Hit', 1)): fh_ban = {20}            # no Free Hit in two weeks running
         plan = fe.plan_chips(V, left, fh_banned=fh_ban)
@@ -1539,7 +1542,7 @@ elif page == 'Chips':
 elif page == 'Captain':
     if team is None: need_team(); done()
     ids = tuple(int(i) for i in team['squad'].id)
-    xi, cap, vice, bench = lineup(ids, G0, BOOST); xp = P[f'xp_{G0}']
+    xi, cap, vice, bench = lineup(ids, G0, PKEY); xp = P[f'xp_{G0}']
     c = sorted(xi, key=lambda i: -xp[i])[:8]
     sec(f'Captain picks for GW{G0}', 'from your starting XI · points shown doubled')
     fig = go.Figure(go.Bar(y=[P.name[i] for i in c][::-1], x=[2 * xp[i] for i in c][::-1], orientation='h',
