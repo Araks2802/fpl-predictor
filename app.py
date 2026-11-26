@@ -558,6 +558,24 @@ else:
 if LIVE_WINDOW: updated_pill += f'<span class="pill" style="border-color:#00ff87;color:#00ff87">● GW{LIVE_GW} {"live now" if LIVE_ON else "in progress"} · predictions update after its results</span>'
 # every match of the latest gameweek is over, but the model has not been retrained on it yet: say so, so nobody reads old numbers as new
 RETRAINING = bool(LIVE_GW) and not LIVE_WINDOW and meta.get('trained_gw') is not None and int(meta['trained_gw']) < LIVE_GW
+@st.cache_data(ttl=1800, show_spinner=False)
+def _kick_update(gw):
+    """Ask GitHub to run the update job now (at most once per 30 minutes). GitHub's own schedule is often hours late; this
+    makes the retrain start as soon as anyone opens the app after a gameweek. Needs a token with Actions write access in the
+    app's secrets as GH_DISPATCH_TOKEN; without it this does nothing. Running twice is harmless (the job never runs twice at once)."""
+    try:
+        tok = st.secrets.get('GH_DISPATCH_TOKEN')
+    except Exception:
+        tok = None
+    if not tok: return False
+    try:
+        import requests as _rq
+        r = _rq.post('https://api.github.com/repos/Araks2802/fpl-predictor/actions/workflows/update.yml/dispatches',
+                     headers={'Authorization': f'Bearer {tok}', 'Accept': 'application/vnd.github+json'}, json={'ref': 'main'}, timeout=10)
+        return r.status_code == 204
+    except Exception:
+        return False
+if RETRAINING and not os.environ.get('FPL_NOW'): _kick_update(LIVE_GW)
 if RETRAINING:
     updated_pill += (f'<span class="pill" style="border-color:#ffb020;color:#ffb020">⟳ Updating after GW{LIVE_GW} · '
                      f'numbers below are from before its results</span>')
