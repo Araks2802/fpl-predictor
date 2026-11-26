@@ -99,3 +99,6 @@ if __name__ == '__main__':
     final['bonus_size'] = cond(hist)
     final['team_cs'] = HistGradientBoostingClassifier(max_iter=200, learning_rate=0.05, max_leaf_nodes=12, l2_regularization=1.0, random_state=0).fit(Tp[TEAM_F], Tp.cs.astype(int))
     joblib.dump({'models': final, 'features': F, 'team_features': TEAM_F}, OUT / 'events.joblib'); print('saved models/events.joblib')
+    # points built from the parts (fpl_parts.py): averaged with the main points model in make_predictions.py
+    import fpl_parts
+    Mp = fpl_parts.fit(h); joblib.dump(Mp, OUT / 'parts.joblib'); print('saved models/parts.joblib | adjustment per position', {k: round(v, 2) for k, v in Mp['adjust'].items()})

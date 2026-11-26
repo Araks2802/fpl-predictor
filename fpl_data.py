@@ -119,6 +119,11 @@ def build(horizon=3):
     for c in STATS: fut[c] = np.nan
     h = pd.concat([h, fut], ignore_index=True)
     h['was_home'] = h.was_home.astype(bool)
+    # goals the team conceded in that match (from the fixture's score; blank for future matches). Used to mix real goals into team xG.
+    sc_ = fixtures[['season', 'id', 'team_h_score', 'team_a_score']].rename(columns={'id': 'fixture'})
+    h = h.merge(sc_, on=['season', 'fixture'], how='left')
+    h['_ga'] = np.where(h.was_home, h.team_a_score, h.team_h_score).astype(float); h.loc[h.future, '_ga'] = np.nan
+    h = h.drop(columns=['team_h_score', 'team_a_score'])
     # ---- team strength of own team and opponent
     ts = ts.drop_duplicates(['season', 'fixture', 'team'])
     own = ts.rename(columns={'team': 'team_id', 'att': 'own_att', 'def_': 'own_def', 'form5': 'own_form5', 'gd5': 'own_gd5'})
@@ -199,21 +204,27 @@ def add_form_and_team_xg(h, gcode):
     # team xG for and against per fixture, rolling over the last 10 played games, shrunk towards the league mean
     codes = _team_codes(); h['_tc'] = [codes.get(k) for k in zip(h.season, h.team_id)]; h['_oc'] = [codes.get(k) for k in zip(h.season, h.opponent_team)]
     tf = h.groupby(['season', 'fixture', '_tc', '_oc'], dropna=False).agg(ko=('kickoff_time', 'first'), xg=('expected_goals', lambda x: x.sum(min_count=1)),
-                                                                       done=('future', lambda x: not x.any())).reset_index()
+                                                                       ga=('_ga', 'first'), done=('future', lambda x: not x.any())).reset_index()
     tf.loc[~tf.done | (tf.xg <= 0), 'xg'] = np.nan     # 0 team xG means the data is missing (early 2022-23), not a real 0
+    tf.loc[~tf.done, 'ga'] = np.nan
     tf = tf.drop_duplicates(['season', 'fixture', '_tc'])
-    opp = tf[['season', 'fixture', '_tc', 'xg']].rename(columns={'_tc': '_oc', 'xg': 'xga'})
+    opp = tf[['season', 'fixture', '_tc', 'xg', 'ga']].rename(columns={'_tc': '_oc', 'xg': 'xga', 'ga': 'gf'})
     tf = tf.merge(opp, on=['season', 'fixture', '_oc'], how='left').sort_values('ko')
     LG, K = 1.35, 5.0
+    # team attack / defence = 75% expected goals + 25% real goals. xG alone ignores finishing that is partly real; tested on 980
+    # team-matches in 2025-26 and 2026-27 (never seen when the weight was chosen), a quarter real goals predicted both clean sheets
+    # and goals better than xG alone, and better than giving goals more weight.
+    W_GOALS = 0.25
     out = []
     for tc, g in tf.groupby('_tc'):
         g = g.copy()
-        for c in ('xg', 'xga'):
+        for c in ('xg', 'xga', 'gf', 'ga'):
             s = g[c]; pl = s.notna()
             post_sum = s[pl].rolling(10, min_periods=1).sum(); post_n = s[pl].rolling(10, min_periods=1).count()
             ps = pd.Series(np.nan, index=g.index); pn = pd.Series(np.nan, index=g.index); ps[pl] = post_sum; pn[pl] = post_n
             ps, pn = ps.shift(1).ffill().fillna(0), pn.shift(1).ffill().fillna(0)
             g[c + '_pre'] = (ps + K * LG) / (pn + K)
+        g['xg_pre'] = (1 - W_GOALS) * g.xg_pre + W_GOALS * g.gf_pre; g['xga_pre'] = (1 - W_GOALS) * g.xga_pre + W_GOALS * g.ga_pre
         out.append(g)
     tf = pd.concat(out)[['season', 'fixture', '_tc', 'xg_pre', 'xga_pre']]
     h = h.merge(tf.rename(columns={'xg_pre': 'own_xgf', 'xga_pre': 'own_xga'}), on=['season', 'fixture', '_tc'], how='left')

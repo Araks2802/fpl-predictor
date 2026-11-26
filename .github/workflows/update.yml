@@ -1,35 +1,30 @@
 name: Update FPL predictions
-
-# Every hour. auto_update.py decides whether to retrain (after a gameweek), do the late team-news refresh
-# (about 2 hours and 1 hour before each deadline), do a daily refresh, or do nothing.
+# Every 10 minutes. auto_update.py decides whether to retrain (as soon as a gameweek is finished), do the late team-news
+# refresh (about 2 hours and 1 hour before each deadline), do a daily refresh, or do nothing (most runs: under a minute).
+# GitHub often starts scheduled runs late or skips them, so the schedule is frequent, and during the last match of a gameweek
+# one run stays and waits for the final result (see auto_update.py) instead of relying on the next run being on time.
 on:
   schedule:
-    - cron: '7 * * * *'        # minute 7 of every hour (UTC). GitHub can start scheduled runs a few minutes late.
+    - cron: '3,13,23,33,43,53 * * * *'   # every 10 minutes, avoiding the top of the hour when GitHub is busiest
   workflow_dispatch:            # lets you run it by hand from the Actions tab
-
 permissions:
   contents: write               # needed to push the new predictions
-
 concurrency:
   group: fpl-update
-  cancel-in-progress: false     # never run two updates at once
-
+  cancel-in-progress: false     # never run two updates at once; a run that is waiting for the final whistle is not interrupted
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 330        # the wait for the final whistle is capped at 4.5 hours, plus about 10 minutes to retrain
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: requirements-train.txt
-
       - name: Install
         run: pip install -r requirements-train.txt
-
       - name: Cache past seasons
         uses: actions/cache@v4
         with:
@@ -39,10 +34,8 @@ jobs:
             data/2024-25
             data/2025-26
           key: fpl-history-v1
-
       - name: Update
         run: python auto_update.py
-
       - name: Commit if anything changed
         run: |
           git config user.name "fpl-bot"
@@ -52,5 +45,6 @@ jobs:
             echo "nothing changed"
           else
             git commit -m "Update predictions: $(python -c "import json;print(json.load(open('data/update_log.json')).get('update_type',''))")"
+            git pull --rebase -X theirs origin main   # a long run may finish after someone else pushed
             git push
           fi

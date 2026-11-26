@@ -1,6 +1,7 @@
 {
  "last_full_gw": 11,
- "updated_at": "2026-11-25T22:25+00:00",
- "update_type": "daily refresh",
- "next_gw": 12
+ "updated_at": "2026-11-26T01:16+00:00",
+ "update_type": "weekly retrain",
+ "next_gw": 12,
+ "checked_gw": 11
 }

@@ -26,7 +26,8 @@ POS = ui.POS
 
 
 @st.cache_data(ttl=3600)
-def load():
+def load(stamp=None):
+    """stamp = the files' modification times, so a freshly pushed retrain is read on the next page load instead of up to an hour later."""
     P = pd.read_parquet(ROOT / 'data' / 'predictions.parquet'); meta = json.load(open(ROOT / 'data' / 'meta.json'))
     boot = json.load(open(ROOT / 'data' / '2026-27' / 'bootstrap.json'))
     gws = sorted(int(c[3:]) for c in P.columns if c.startswith('xp_'))
@@ -103,7 +104,7 @@ def run_opt(squad_json, bank, ft, k, chip, roll, banned, keep, gws, boost=0.0):
     return fe.optimise(P, list(gws), sq, bank, ft, max_transfers=k, chip=chip, roll_value=roll, banned=list(banned), forced=list(keep))
 
 
-P, meta, boot, ALL_GWS = load(); P = P.copy()
+P, meta, boot, ALL_GWS = load(tuple((ROOT / 'data' / f).stat().st_mtime for f in ('predictions.parquet', 'meta.json'))); P = P.copy()
 # ---- which gameweek is next, from the deadlines: the moment a deadline passes the app moves on to the next gameweek by itself,
 # without waiting for the update job (the prediction file already covers every remaining gameweek).
 # FPL_NOW=2026-11-21T14:00:00Z pretends it is another time (for testing).
@@ -555,10 +556,20 @@ if NEWS_AT:                       # team news and prices come live from FPL; the
 else:
     updated_pill = (f'<span class="pill">Updated {_ago(meta["updated_at"])}' + (' · late team news' if meta.get('update_type', '').startswith('late') else '') + '</span>') if meta.get('updated_at') else ''
 if LIVE_WINDOW: updated_pill += f'<span class="pill" style="border-color:#00ff87;color:#00ff87">● GW{LIVE_GW} {"live now" if LIVE_ON else "in progress"} · predictions update after its results</span>'
+# every match of the latest gameweek is over, but the model has not been retrained on it yet: say so, so nobody reads old numbers as new
+RETRAINING = bool(LIVE_GW) and not LIVE_WINDOW and meta.get('trained_gw') is not None and int(meta['trained_gw']) < LIVE_GW
+if RETRAINING:
+    updated_pill += (f'<span class="pill" style="border-color:#ffb020;color:#ffb020">⟳ Updating after GW{LIVE_GW} · '
+                     f'numbers below are from before its results</span>')
 sub = (f"{team['manager']} · {team['points']} pts · rank {team['rank']:,}" if team and team.get('rank') else 'Projected points, best XI, captain and transfers for the coming gameweek')
 html(f'<div class="hero"><div class="hero-title">{ui.esc(team["name"]) if team else "Your FPL team,"} <span>{"GW" + str(G0) if team else "projected."}</span></div>'
      f'<div class="hero-sub">{ui.esc(sub)}</div>'
      f'<span class="pill g">GW{G0} · {deadline.astimezone(UK):%a %d %b %H:%M} UK time</span><span class="pill">Deadline in {countdown}</span>{updated_pill}</div>')
+if RETRAINING:
+    html(f'<div class="note" style="border-left:3px solid #ffb020;padding:8px 12px;margin:0 0 10px 0">'
+         f'<b style="color:#ffb020">The model is updating with GW{LIVE_GW}\'s results.</b> Every match is over, and the predictions are being retrained. '
+         f'Until that finishes (usually within a few hours of the last match), the points, captain picks and transfers below are still the ones made '
+         f'<b>before</b> GW{LIVE_GW}. Injury news and prices are already live.</div>')
 if st.session_state.get('nav') == 'Live' and not LIVE_WINDOW: st.session_state['nav'] = 'My team'   # the gameweek ended while the Live tab was open
 # the Live tab only exists while a gameweek is being played
 PAGES = (['Live'] if LIVE_WINDOW else []) + ['My team', 'Transfers', 'Planner', 'Captain', 'Chips', 'League', 'Compare', 'Players', 'Teams', 'Review', 'How it works']
@@ -943,7 +954,8 @@ elif page == 'Transfers':
                    (str(len(W[0]['inn'])), f'transfer{"s" if len(W[0]["inn"]) != 1 else ""} this week', 'g'), (f'−{fe.HIT * hits_tot}' if hits_tot else '0', 'hit points', ''),
                    (f'£{W[0]["bank"] / 10:.1f}m', 'bank after this week', 'c')]))
     if chip == 'Free Hit':
-        html('<div class="note">Free Hit: this team plays GW%d only. Your current squad comes back next week, and your free transfers are kept.</div>' % gws[0])
+        html('<div class="note">Free Hit: this team plays GW%d only. Your current squad comes back next week, and your free transfers are kept. '
+             'The money goes into the starting XI: the bench is the cheapest legal players, plus one decent outfield sub in case a starter misses out.</div>' % gws[0])
     else:
         html('<div class="note" style="margin:-2px 0 6px 0">Why the answer can change with the horizon: a transfer keeps paying off every week you keep the new player, '
              'while saving the transfer is worth about %.1f point. Over 1 week a small gain may not beat saving it (so: hold); over 3 weeks the same move adds up and wins (so: do it now).</div>' % roll)
@@ -1891,7 +1903,7 @@ elif page == 'Review':
 # ================================================================== HOW IT WORKS
 else:
     sc = pd.read_csv(ROOT / 'models' / 'test_scores.csv'); s = sc[sc.group == 'starters']
-    nm = {'last5': 'Average of last 5 games', 'gbm': 'Gradient boosting', 'mlp': 'PyTorch network', 'blend': 'Blend (used here)'}
+    nm = {'last5': 'Average of last 5 games', 'gbm': 'Gradient boosting', 'mlp': 'PyTorch network', 'blend': 'Points model (blend)'}
     html(ui.cards([(f'{s[s.predictor == "blend"]["rank corr (per GW)"].iloc[0]:.2f}', 'ranking accuracy of our model (regular starters)', 'g'),
                    (f'{s[s.predictor == "last5"]["rank corr (per GW)"].iloc[0]:.2f}', 'ranking accuracy of recent form', ''),
                    ('5 seasons', 'of game-by-game history, 2022-23 to now', 'c'), ('< 1 sec', 'to search every legal squad', '')]))
@@ -1907,6 +1919,13 @@ They only see things known before kick-off:
 - **His team and the opponent:** results and goal difference over the last 5, goals and expected goals for and against over the last 8 to 10, and a clean-sheet chance from those.
 - **The match:** home or away, how he has done against this opponent before, and his home or away record, both compared with his usual level.
 - **The season:** how many points each position is scoring league-wide right now, so the model adjusts when the rules change.
+
+The projected points shown are the average of that model and the same points **built from the parts** with FPL's scoring:
+appearance, goals and assists by position, clean sheet, defensive contribution, bonus, and for goalkeepers saves and goals conceded.
+The parts keep a player's total in line with his own chances, so a keeper facing a strong attack is not ranked above one with a far better
+clean-sheet chance. Tested on unseen weeks, the average was as accurate as the points model alone or better.
+Team strength mixes expected goals (75%) with real goals (25%): xG alone ignores finishing that is partly real, and that mix predicted
+clean sheets and goals best on 980 unseen team-matches.
 
 Flagged players are scaled by their chance of playing.
 

@@ -17,6 +17,9 @@ POS_NAME = {1: 'GK', 2: 'DEF', 3: 'MID', 4: 'FWD'}
 SQUAD_NEED = {1: 2, 2: 5, 3: 5, 4: 3}
 XI_MIN = {1: 1, 2: 3, 3: 2, 4: 1}; XI_MAX = {1: 1, 2: 5, 3: 5, 4: 3}
 HIT = 4
+# Free Hit is a one-week squad, so the bench is not worth spending on. One outfield "safety sub" is still valued (he comes on when a
+# starter misses the game: roughly a 1 in 4 chance across an XI), and the other three bench spots go to the cheapest legal players.
+FH_SAFETY_WEIGHT = 0.25
 _s = requests.Session(); _s.headers['User-Agent'] = 'Mozilla/5.0 (personal FPL project)'
 
 
@@ -37,6 +40,9 @@ def predictions(h, nets, sc, gb, boot, horizon=3):
     import fpl_data as fd
     fut = h[h.future].copy()
     fut['xp'] = (predict(nets, sc, fut) + gb.predict(fut[getattr(gb, 'feature_list_', fd.FEATURES)].fillna(-1))) / 2
+    if 'xp_parts' in fut and fut.xp_parts.notna().all():
+        # average with the points built from the parts (fpl_parts.py), so a player's total agrees with his clean-sheet, goal and save chances
+        fut['xp'] = (fut.xp + fut.xp_parts) / 2
     fut['xp'] = fut.xp.clip(lower=0)
     el = pd.DataFrame(boot['elements']).set_index('id')
     gws = sorted(fut.gw.unique())[:horizon]
@@ -144,7 +150,7 @@ def chip_values(P, squad, bank, ft, gws, wc_window=4, wc_starts=6):
 
     Bench Boost    the bench's projected points that week (they count when it is on).
     Triple Captain one extra helping of the captain's projected points.
-    Free Hit       best possible XI for that one week (same budget) minus your own XI that week.
+    Free Hit       best possible XI for that one week (same budget, cheapest bench plus one safety sub) minus your own XI that week.
     Wildcard       over the wc_window weeks from that week: best rebuilt squad minus what your normal free transfers achieve.
                    Only worked out for the first wc_starts weeks (it needs the most computing and plans that far ahead change anyway).
     All values assume you keep this squad until then, so later weeks are rougher.
@@ -227,13 +233,17 @@ def optimise(P, gws, squad, bank, ft, max_transfers=1, chip=None, weights=None, 
     squad: DataFrame with id, sell (tenths of £m). bank in tenths. chip: None, 'Wildcard' or 'Free Hit'.
     roll_value: points a saved free transfer is worth (so the optimiser won't make a 0.1-point transfer just because it is free).
     """
-    if chip == 'Free Hit': gws = gws[:1]
+    free_hit = chip == 'Free Hit'
+    if free_hit: gws = gws[:1]; bench_weight = 0.0
     weights = weights or decay(len(gws))
     unlimited = chip in ('Wildcard', 'Free Hit')
     owned = set(squad.id); sellp = squad.set_index('id').sell
     w = dict(zip(gws, weights))
     score = sum(P[f'xp_{g}'] * w[g] for g in gws)
     pool = set(P[(score > 0.8 * len(gws)) & (P.status != 'u')].index) | owned
+    if unlimited:   # a rebuilt squad needs cheap bench players too, and they project too few points to pass the filter above
+        avail = P[(P.status == 'a')]
+        for p in (1, 2, 3, 4): pool |= set(avail[avail.pos == p].nsmallest(5, 'price').index)
     pool = [i for i in pool if i not in banned or i in owned]
     Q = P.loc[pool]
     m = pulp.LpProblem('fpl', pulp.LpMaximize)
@@ -263,6 +273,16 @@ def optimise(P, gws, squad, bank, ft, max_transfers=1, chip=None, weights=None, 
             m += s[i, g] <= x[i]; m += c[i, g] <= s[i, g]
             xp = float(Q.loc[i, f'xp_{g}'])
             obj.append(w[g] * xp * (s[i, g] + c[i, g] + bench_weight * (x[i] - s[i, g])))
+    if free_hit:
+        g = gws[0]
+        b1 = {i: pulp.LpVariable(f'b1_{i}', cat='Binary') for i in pool if Q.pos[i] != 1}     # the one safety sub (outfield)
+        m += pulp.lpSum(b1.values()) <= 1
+        for i, v in b1.items():
+            m += v <= x[i] - s[i, g]
+            obj.append(FH_SAFETY_WEIGHT * float(Q.loc[i, f'xp_{g}']) * v)
+        # the rest of the bench: as cheap as possible (tiny weight, so it never costs a point in the XI)
+        for i in pool:
+            obj.append(-0.001 * float(Q.price[i]) * (x[i] - s[i, g] - (b1[i] if i in b1 else 0)))
     rv = roll_value if ft < 5 else 0.0
     m += pulp.lpSum(obj) - HIT * hits - rv * used_ft
     m.solve(pulp.PULP_CBC_CMD(msg=0, timeLimit=60))

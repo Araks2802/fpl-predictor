@@ -1,9 +1,9 @@
 predictor,RMSE,MAE,rank corr (per GW),avg pts of top-10 picks,group
 last5,2.242,1.232,0.665,4.333,all
-gbm,2.073,1.169,0.698,4.856,all
-mlp,2.082,1.154,0.691,4.556,all
-blend,2.073,1.158,0.697,5.022,all
+gbm,2.069,1.167,0.699,5.167,all
+mlp,2.081,1.167,0.692,4.7,all
+blend,2.071,1.165,0.697,5.044,all
 last5,3.324,2.524,0.183,4.333,starters
-gbm,3.07,2.323,0.264,4.856,starters
-mlp,3.077,2.315,0.261,4.556,starters
-blend,3.068,2.315,0.268,5.022,starters
+gbm,3.063,2.321,0.268,5.167,starters
+mlp,3.077,2.332,0.258,4.7,starters
+blend,3.065,2.323,0.269,5.044,starters

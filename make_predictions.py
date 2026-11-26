@@ -13,6 +13,10 @@ ROOT = Path(__file__).parent
 boot = json.load(open(ROOT / 'data' / '2026-27' / 'bootstrap.json'))
 h = fd.build(horizon=38)          # every remaining gameweek (later weeks are rough: form is held at today's level)
 nets, sc = fm.load(ROOT / 'models' / 'mlp.pt'); gb = joblib.load(ROOT / 'models' / 'gbm.joblib')
+# points built from the parts (fpl_parts.py); fe.predictions averages them with the main model. Skipped if the file is missing.
+if (ROOT / 'models' / 'parts.joblib').exists():
+    import fpl_parts
+    h.loc[h.future, 'xp_parts'] = fpl_parts.predict(joblib.load(ROOT / 'models' / 'parts.joblib'), h[h.future]).xp_parts
 P, gws = fe.predictions(h, nets, sc, gb, boot, horizon=38)
 # official fixture difficulty (1 easy to 5 hard) for every player-gameweek; blank gameweek = 0, double = the harder one
 fx = json.load(open(ROOT / 'data' / '2026-27' / 'fixtures.json'))
